@@ -1,72 +1,87 @@
 import cv2
 import numpy as np
-from utils import sortPoints,greenandred,find,inorout
-import argparse
+from liver.utils import sortPoints, greenandred, find, inorout
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--mix_dir')
-args = parser.parse_args()
 
-if __name__ == '__main__':
-    img = cv2.imread(args.mix_dir)
-    img1 = cv2.imread(args.mix_dir)
+def count_cells(img, config=None):
+    """Count neutrophils (green) and macrophages (red) within the liver region.
+
+    Args:
+        img: BGR numpy array
+        config: dict with liver config values
+
+    Returns:
+        dict with red_img, green_img, mac_count, neu_count
+    """
+    if config is None:
+        config = {}
+
+    mask_threshold = config.get("mask_threshold", 249)
+    mask_threshold_max = config.get("mask_threshold_max", 250)
+    mask_blur_kernel = config.get("mask_blur_kernel", 13)
+
+    img1 = img.copy()
+    img_green = img.copy()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    ret, th1 = cv2.threshold(gray, 249, 250, cv2.THRESH_BINARY)
+    ret, th1 = cv2.threshold(gray, mask_threshold, mask_threshold_max, cv2.THRESH_BINARY)
 
-    #gray = cv2.cvtColor(th1,cv2.COLOR_BGR2GRAY)
-    kernel_size = 13
-    blur_gray = cv2.GaussianBlur(th1,(kernel_size,kernel_size),0)
+    blur_gray = cv2.GaussianBlur(th1, (mask_blur_kernel, mask_blur_kernel), 0)
     (cnt, hierarchy) = cv2.findContours(
         blur_gray.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    new_cnt=[]
+    new_cnt = []
     for i in cnt:
-        mean = np.mean(i,axis=0).astype(np.int32)
-        if (mean[0][0]<img.shape[0]*0.95 or mean[0][1]<img.shape[1]*0.95):
+        mean = np.mean(i, axis=0).astype(np.int32)
+        if (mean[0][0] < img.shape[0] * 0.95 or mean[0][1] < img.shape[1] * 0.95):
             new_cnt.append(mean[0])
-            #cv2.circle(img, mean[0], 1, (0, 255, 0), 20)
+    if len(new_cnt) < 3:
+        return {
+            "red_img": img.copy(),
+            "green_img": img.copy(),
+            "mac_count": 0,
+            "neu_count": 0,
+            "warning": "No liver region detected — not enough bright border points to form a mask. Is this a channel-mix image with a bright border?",
+        }
+
     new_cnt = sortPoints(new_cnt)
     new_cnt = np.array(new_cnt).astype(np.int32)
-    #cv2.drawContours(th1, new_cnt, -1, (255, 255, 255), 10)
 
-    mask = np.zeros_like(img,dtype=np.uint8)
+    mask = np.zeros_like(img, dtype=np.uint8)
+    cv2.fillPoly(mask, [new_cnt], (255, 255, 255))
 
-    cv2.fillPoly(mask,[new_cnt],(255,255,255))
-    #cv2.imwrite("mask.jpg", mask)
+    green, red = greenandred(img, config)
 
-    green,red = greenandred(img)
+    green_cnt = find(green, config)
+    green_mean = [np.mean(i, axis=0).astype(np.int32) for i in green_cnt]
+    new_green_cnt, new_green_cnt_mean = inorout(green_cnt, green_mean, mask)
 
-    green_cnt = find(green)
-    green_mean = [np.mean(i,axis=0).astype(np.int32) for i in green_cnt]
-    new_green_cnt,new_green_cnt_mean = inorout(green_cnt,green_mean,mask)
-    green_mean = np.array(green_mean).astype(np.int32)
-    new_green_cnt_mean = np.array(new_green_cnt_mean).astype(np.int32)
-    green_mean = [np.mean(i,axis=0).astype(np.int32) for i in green_cnt]
+    red_cnt = find(red, config)
+    red_mean = [np.mean(i, axis=0).astype(np.int32) for i in red_cnt]
+    new_red_cnt, new_red_cnt_mean = inorout(red_cnt, red_mean, mask)
 
-    red_cnt = find(red)
-    red_mean = [np.mean(i,axis=0).astype(np.int32) for i in red_cnt]
-    red_mean = np.array(red_mean).astype(np.int32)
-    new_red_cnt,new_red_cnt_mean = inorout(red_cnt,red_mean,mask)
-    red_mean = np.array(red_mean).astype(np.int32)
-    new_red_cnt_mean = np.array(new_red_cnt_mean).astype(np.int32)
-    print(len(new_red_cnt_mean),len(new_green_cnt_mean))
-
-    cv2.drawContours(red, new_red_cnt, -1, (255, 255, 255), 5)
     cv2.drawContours(img1, new_red_cnt, -1, (255, 255, 255), 5)
-    cv2.drawContours(green, new_green_cnt, -1, (255, 255, 255), 5)
-    cv2.drawContours(img, new_green_cnt, -1, (255, 255, 255), 5)
-    #cv2.imwrite("result/red.jpg", red)
-    cv2.imwrite("result/red.jpg", img1)
-    #cv2.imwrite("result/green.jpg", green)
-    cv2.imwrite("result/green.jpg", img)
-    #cv2.imwrite("mask.jpg", mask)
-    #cv2.imwrite("white.jpg", th1)
-    path = './result/output.txt'
-    f = open(path, 'w')
-    f.write('macrophage count:'+str(len(new_red_cnt_mean))+'\n')
-    #f.write(len(new_red_cnt_mean))
-    f.write('neutrophil count:'+str(len(new_green_cnt_mean)))
-    #f.write(len(new_green_cnt_mean))
-    f.close()
-    #cv2.imwrite("gray.jpg", img)
-    
+    cv2.drawContours(img_green, new_green_cnt, -1, (255, 255, 255), 5)
+
+    return {
+        "red_img": img1,
+        "green_img": img_green,
+        "mac_count": len(new_red_cnt_mean),
+        "neu_count": len(new_green_cnt_mean),
+        "warning": None,
+    }
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mix_dir')
+    args = parser.parse_args()
+
+    img = cv2.imread(args.mix_dir)
+    result = count_cells(img)
+
+    cv2.imwrite("result/red.jpg", result["red_img"])
+    cv2.imwrite("result/green.jpg", result["green_img"])
+    with open('./result/output.txt', 'w') as f:
+        f.write('macrophage count:' + str(result["mac_count"]) + '\n')
+        f.write('neutrophil count:' + str(result["neu_count"]))

@@ -1,0 +1,33 @@
+liver:
+  hsv_green_lower: [40, 70, 30]
+  hsv_green_upper: [255, 255, 255]
+  hsv_red1_lower: [0, 70, 50]
+  hsv_red1_upper: [10, 255, 255]
+  hsv_red2_lower: [170, 70, 50]
+  hsv_red2_upper: [180, 255, 255]
+  contour_area_min: 200
+  blur_kernel: 3
+  mask_threshold: 249
+  mask_threshold_max: 250
+  mask_blur_kernel: 13
+
+liver1:
+  hsv_green_lower: [36, 25, 25]
+  hsv_green_upper: [100, 255, 255]
+  contour_area_min: 20
+
+cell:
+  confidence_threshold: 0.75
+  segmentation_threshold: 0.9
+  um_conversion: 0.181
+  padding: 100
+  hough_dp: 1
+  hough_min_dist_divisor: 64
+  hough_param1: 50
+  hough_param2: 0.8
+  hough_min_radius: 1
+  hough_max_radius: 60
+  lab_lower: [70, 70, 70]
+  lab_upper: [190, 255, 255]
+  blur_kernel: 5
+  median_blur_kernel: 7

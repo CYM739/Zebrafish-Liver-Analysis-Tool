@@ -8,7 +8,7 @@ import torch
 class Net(nn.Module):
     def __init__(self):
         super().__init__()
-        self.model = models.resnet18(pretrained=True)
+        self.model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
         #self.in_features = self.model.fc.in_features
         self.fc = nn.Linear(1000,1)
 
@@ -18,14 +18,12 @@ class Net(nn.Module):
         return x
 
 
-net = Net()
-
 
 
 
 import torch
 import torch.nn as nn
-from resnet import resnet50
+from cell.resnet import resnet50
 
 
 class unetUp(nn.Module):

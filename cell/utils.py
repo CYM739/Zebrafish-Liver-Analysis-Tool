@@ -10,22 +10,8 @@ from torchvision import transforms
 from torchvision.transforms import functional as TF
 import cv2
 from torchvision.transforms import ToTensor
-
 import numpy as np
-import cv2
-
-value=100
-
-'''
-im = Image.open("./train1/0.tif")
-#im.show()
-im = TF.rotate(im,120,Image.BILINEAR,False,)
-im.show()
-transform = transforms.Compose([
-    transforms.RandomRotation(30, resample=Image.BICUBIC, expand=False, center=(55, 5))])
-'''
-
-
+from torch import Tensor
 
 
 class CellDataset(Dataset):
@@ -44,7 +30,6 @@ class CellDataset(Dataset):
         tranform = transforms.Compose([transforms.Pad(12, fill=(0,0,0), padding_mode='constant'),ToTensor()])
         image = tranform(image)
         label = self.img_labels['0'][idx]
-
         return image, label
 
 class MaskDataset(Dataset):
@@ -67,102 +52,88 @@ class MaskDataset(Dataset):
         transform_label = transforms.Compose([transforms.Pad(12, fill=(0), padding_mode='constant'),ToTensor()])
         image = transform(image)
         label = transform_label(label)
-        #label = self.img_labels['0'][idx]
-
         return image, label
 
-#dataset = MaskDataset(img_dir='./mask_train',label_dir='./mask_train_label')
-#train_dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
-#train_features, train_labels = next(iter(train_dataloader))
-#x=1
-#test_dataloader = DataLoader(test_data, batch_size=64, shuffle=True)
 
-def circle(red_dir ):
-    value=100
-    captured_frame = cv2.imread(red_dir)
-    captured_frame = cv2.copyMakeBorder(captured_frame,value,value,value,value,cv2.BORDER_CONSTANT,value=(0,0,0))
+def mix_circle(img, config=None):
+    """Detect circles in a channel-mix image using HoughCircles.
 
-    #captured_frame2 = cv2.imread('./4/4_hepatocyte membrane blue.tif')
-    #captured_frame2 = cv2.copyMakeBorder(captured_frame2,value,value,value,value,cv2.BORDER_CONSTANT,value=(0,0,0))
+    Args:
+        img: BGR numpy array (NOT a file path)
+        config: dict with cell config values
+    Returns:
+        numpy array of circles (x, y, radius) or None
+    """
+    if config is None:
+        config = {}
+    value = config.get("padding", 100)
+    lab_lower = np.array(config.get("lab_lower", [70, 70, 70]))
+    lab_upper = np.array(config.get("lab_upper", [190, 255, 255]))
+    blur_kernel = config.get("blur_kernel", 5)
+    median_blur_kernel = config.get("median_blur_kernel", 7)
+    hough_dp = config.get("hough_dp", 1)
+    hough_min_dist_divisor = config.get("hough_min_dist_divisor", 64)
+    hough_param1 = config.get("hough_param1", 50)
+    hough_param2 = config.get("hough_param2", 0.8)
+    hough_min_radius = config.get("hough_min_radius", 1)
+    hough_max_radius = config.get("hough_max_radius", 60)
+
+    captured_frame = cv2.copyMakeBorder(img, value, value, value, value,
+                                        cv2.BORDER_CONSTANT, value=(0, 0, 0))
 
     captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_BGRA2BGR)
-
-    captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, 7)
-
+    captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, median_blur_kernel)
     captured_frame_lab = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2Lab)
 
-    captured_frame_lab_red = cv2.inRange(captured_frame_lab, np.array([0, 160, 160]), np.array([180, 255, 255]))
+    captured_frame_lab_red = cv2.inRange(captured_frame_lab, lab_lower, lab_upper)
+    captured_frame_lab_red = cv2.GaussianBlur(captured_frame_lab_red,
+                                              (blur_kernel, blur_kernel), 2, 2)
 
-    captured_frame_lab_red = cv2.GaussianBlur(captured_frame_lab_red, (5, 5), 2, 2)
-
-    circles = cv2.HoughCircles(captured_frame_lab_red, cv2.HOUGH_GRADIENT, 0.01, captured_frame_lab_red.shape[0] / 48, 
-                            param1=60, param2=20, minRadius=3, maxRadius=60)
+    circles = cv2.HoughCircles(captured_frame_lab_red, cv2.HOUGH_GRADIENT_ALT,
+                               hough_dp,
+                               captured_frame_lab_red.shape[0] / hough_min_dist_divisor,
+                               param1=hough_param1, param2=hough_param2,
+                               minRadius=hough_min_radius, maxRadius=hough_max_radius)
     if circles is not None:
         circles = np.round(circles[0, :]).astype("int")
     return circles
 
-def mix_circle(mix_dir ):
-    value=100
-    captured_frame = cv2.imread(mix_dir)
-    captured_frame = cv2.copyMakeBorder(captured_frame,value,value,value,value,cv2.BORDER_CONSTANT,value=(0,0,0))
 
-    #captured_frame2 = cv2.imread('./4/4_hepatocyte membrane blue.tif')
-    #captured_frame2 = cv2.copyMakeBorder(captured_frame2,value,value,value,value,cv2.BORDER_CONSTANT,value=(0,0,0))
+def cut(img_padded, circle, config=None):
+    """Extract a square crop around a detected circle.
 
-    captured_frame_bgr = cv2.cvtColor(captured_frame, cv2.COLOR_BGRA2BGR)
+    Args:
+        img_padded: BGR numpy array, already padded
+        circle: array-like [x, y, radius]
+        config: dict with cell config values
+    Returns:
+        cropped BGR numpy array
+    """
+    if config is None:
+        config = {}
+    value = config.get("padding", 100)
 
-    captured_frame_bgr = cv2.medianBlur(captured_frame_bgr, 7)
+    circle = list(circle)  # make mutable copy
+    h, w = img_padded.shape[:2]
 
-    captured_frame_lab = cv2.cvtColor(captured_frame_bgr, cv2.COLOR_BGR2Lab)
-    #def show_xy(event,x,y,flags,param):            # 顯示繪製後的影像
-        #color = captured_frame_lab[y,x]                          # 當滑鼠點擊時
-        #print(color)                              # 印出顏色
-    #cv2.imshow('oxxostudio', captured_frame_lab)
-    #cv2.setMouseCallback('oxxostudio', show_xy)
+    cv2.circle(img_padded, center=(circle[0], circle[1]), radius=circle[2],
+               color=(0, 255, 0), thickness=2)
 
-    captured_frame_lab_red = cv2.inRange(captured_frame_lab, np.array([70, 70, 70]), np.array([190, 255, 255]))
-    #captured_frame_lab_red = cv2.inRange(captured_frame_lab, np.array([0, 160, 160]), np.array([180, 255, 255]))
-    captured_frame_lab_red = cv2.GaussianBlur(captured_frame_lab_red, (5, 5), 2, 2)
+    if circle[0] > w - value:
+        circle[0] = w - value
+    if circle[1] > h - value:
+        circle[1] = h - value
+    if circle[0] < value:
+        circle[0] = value
+    if circle[1] < value:
+        circle[1] = value
 
-    circles = cv2.HoughCircles(captured_frame_lab_red, cv2.HOUGH_GRADIENT_ALT, 1, captured_frame_lab_red.shape[0] / 64, 
-                            param1=50, param2=0.8, minRadius=1, maxRadius=60)
-    if circles is not None:
-        circles = np.round(circles[0, :]).astype("int")
-    #for i in range(len(circles)):
-        #cv2.circle(captured_frame, center=(circles[i,0], circles[i,1]), radius=circles[i][2], color=(0, 255, 0), thickness=2)
-    #cv2.imshow('x',captured_frame)
-    #cv2.imshow('y',captured_frame_lab_red)
-    #cv2.waitKey(0)
-    return circles
-
-def cut(dir_mix,circle):
-    value=100
-    captured_frame1 = cv2.imread(dir_mix)
-    captured_frame1 = cv2.copyMakeBorder(captured_frame1,value,value,value,value,cv2.BORDER_CONSTANT,value=(0,0,0))
-        #cv2.circle(captured_frame, center=(circles[i, 0], circles[i, 1]), radius=circles[i, 2], color=(0, 255, 0), thickness=2)
-    cv2.circle(captured_frame1, center=(circle[0], circle[1]), radius=circle[2], color=(0, 255, 0), thickness=2)
-    if(circle[0]>1224-value):
-        circle[0]=1224-value
-    if(circle[1]>1224-value):
-        circle[1]=1224-value
-    if(circle[0]<value):
-        circle[0]=value
-    if(circle[1]<value):
-        circle[1]=value
-    
-    new_image = captured_frame1[circle[1]-value:circle[1]+value,circle[0]-value:circle[0]+value,:]
-        #cv2.imwrite('./train1/'+str(i)+'.tif',new_image)
-        #new_image = captured_frame2[circles[i, 1]-value:circles[i, 1]+value,circles[i, 0]-value:circles[i, 0]+value,:]
-        #cv2.imwrite('./train/'+str(i)+'.tif',new_image)
+    new_image = img_padded[circle[1]-value:circle[1]+value,
+                           circle[0]-value:circle[0]+value, :]
     return new_image
 
 
-import torch
-from torch import Tensor
-
-
 def dice_coeff(input: Tensor, target: Tensor, reduce_batch_first: bool = False, epsilon: float = 1e-6):
-    # Average of Dice coefficient for all batches, or for a single mask
     assert input.size() == target.size()
     assert input.dim() == 3 or not reduce_batch_first
 
@@ -177,11 +148,9 @@ def dice_coeff(input: Tensor, target: Tensor, reduce_batch_first: bool = False, 
 
 
 def multiclass_dice_coeff(input: Tensor, target: Tensor, reduce_batch_first: bool = False, epsilon: float = 1e-6):
-    # Average of Dice coefficient for all classes
     return dice_coeff(input.flatten(0, 1), target.flatten(0, 1), reduce_batch_first, epsilon)
 
 
 def dice_loss(input: Tensor, target: Tensor, multiclass: bool = False):
-    # Dice loss (objective to minimize) between 0 and 1
     fn = multiclass_dice_coeff if multiclass else dice_coeff
     return 1 - fn(input, target, reduce_batch_first=True)
