@@ -541,4 +541,4 @@ def build_app():
 
 if __name__ == "__main__":
     app = build_app()
-    app.launch()
+    app.launch(server_name="0.0.0.0", server_port=7860)
