@@ -1,5 +1,6 @@
 # Analysis profiles: each one is a complete set of algorithms + models (see profiles/).
-# The app's profile selector starts on default_profile.
+# The app's profile selectors start on default_profile, which must offer every analysis.
+# A profile's offered_in_app lists the analyses users may pick it for (default: all); the rest stay dev-only.
 default_profile: dhcl8881
 
 profiles:
@@ -39,6 +40,7 @@ profiles:
 
   # Fixed known issues; N/C ratio by Cellpose-SAM. See CHANGELOG for what differs from dhcl8881.
   cpsam-v1:
+    offered_in_app: [cell]             # count/boundary fixes stay dev-only until validated
     count:
       hsv_green_lower: [40, 70, 30]
       hsv_green_upper: [90, 255, 255]  # green hues only
@@ -61,6 +63,7 @@ profiles:
     cell:
       model: cpsam_v2                  # Cellpose-SAM weights; downloaded on first use
       um_conversion: 0.181
+      nc_denominator: cell             # N/C = nucleus ÷ whole cell; "cytoplasm" = nucleus ÷ (cell − nucleus)
       cell_channel: blue               # stain of the cell bodies / membranes
       nucleus_channel: red             # stain of the nuclei in the channel-mix image
       diameter: 0                      # typical cell diameter in px; 0 = automatic

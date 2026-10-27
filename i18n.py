@@ -22,11 +22,11 @@ STRINGS = {
         "en": "The original author's methods and models, unchanged. Results match earlier versions of this tool.",
         "zh": "原作者的分析方法與模型，未做任何修改，結果與本工具先前版本相同。"},
     "profile_desc_cpsam-v1": {
-        "en": "Fixes known issues of the original. The N/C ratio uses Cellpose-SAM and excludes the nucleus "
-              "from the cytoplasm; cells that may be several touching cells are outlined in orange for review. "
-              "The first N/C analysis downloads a 1.2 GB model; without a GPU each image takes 1–2 minutes.",
-        "zh": "修正原版的已知問題。核質比改用 Cellpose-SAM，細胞質面積不再包含細胞核；可能是多個細胞黏在一起的偵測會以橘色外框標示，方便檢查。"
-              "第一次分析核質比時需下載約 1.2 GB 模型；沒有 GPU 時每張影像約需 1–2 分鐘。"},
+        "en": "Outlines each cell and its nucleus with Cellpose-SAM and skips cells that cannot be measured reliably "
+              "(cut off by the image edge, out of focus, or without exactly one nucleus). "
+              "The first analysis downloads a 1.2 GB model; without a GPU each image takes 1–2 minutes.",
+        "zh": "以 Cellpose-SAM 描出每個細胞與細胞核的輪廓，並略過無法可靠測量的細胞（被影像邊緣切到、失焦、或不是剛好一個細胞核）。"
+              "第一次分析需下載約 1.2 GB 模型；沒有 GPU 時每張影像約需 1–2 分鐘。"},
 
     # Shared components
     "upload": {"en": "Upload Images", "zh": "上傳影像"},

@@ -35,14 +35,16 @@ Opens at http://localhost:7860. Server address, port, default UI language (中�
 
 ## Analysis profiles
 
-A profile is a complete set of algorithms and models. Pick one from the selector at the top of the page; each result CSV records the profile in its `profile` column, and the `.zip` includes `*_settings.json` with every setting used.
+A profile is a complete set of algorithms and models. Tabs where more than one profile is offered show a method selector; each result CSV records the profile in its `profile` column, and the `.zip` includes `*_settings.json` with every setting used.
 
 | Profile | What it is |
 |---|---|
 | `dhcl8881` (default) | The original author's algorithms and models, unchanged (`liver/`, `liver1/`, `cell/`). Reproduces earlier results exactly. |
-| `cpsam-v1` | Fixes the confirmed issues of `dhcl8881` (`profiles/cpsam_v1/`): N/C ratio from Cellpose-SAM cell + nucleus segmentation with the nucleus excluded from the cytoplasm; corrected scale-bar exclusion; both red hue ranges; boundary regions outlined separately; possibly merged cells flagged in orange. Its N/C values differ substantially from `dhcl8881` and have not yet been validated against manual annotation. |
+| `cpsam-v1` | Offered in the app for the N/C ratio only (`offered_in_app`): Cellpose-SAM cell + nucleus segmentation with quality filters. Its N/C values have not yet been validated against manual annotation. Its count and boundary fixes (`profiles/cpsam_v1/`: corrected scale-bar exclusion, both red hue ranges, boundary regions outlined separately, possibly merged cells flagged in orange) stay dev-only until validated. |
 
-Profile settings live under `profiles:` in `config.yaml`; the default profile is `default_profile`. To add a profile, add a module under `profiles/` that defines `NAME` and `ANALYSES` (see `profiles/base.py`), register it in `profiles/__init__.py`, and add its section to `config.yaml` and its labels to `i18n.py`.
+Profile settings live under `profiles:` in `config.yaml`; the default profile is `default_profile` and must offer every analysis. `offered_in_app` limits a profile to the listed analyses in the app.
+
+N/C ratio definition (`cpsam-v1`, `cell.nc_denominator`, not shown in the app): `cell` (default) = nucleus ÷ whole cell, `cytoplasm` = nucleus ÷ (cell − nucleus). Both are used in the literature; `cell` counts cytoplasm lying above or below the nucleus. The value used is recorded in `*_settings.json`. To add a profile, add a module under `profiles/` that defines `NAME` and `ANALYSES` (see `profiles/base.py`), register it in `profiles/__init__.py`, and add its section to `config.yaml` and its labels to `i18n.py`.
 
 ## Tabs
 
@@ -57,9 +59,9 @@ Every detected cell is numbered on the result image, and the same number appears
 
 | Tab | Profile | `*_summary.csv` (one row per image) | `*_cells.csv` (one row per cell) |
 |---|---|---|---|
-| Count / Combined | both | `macrophage_count`, `neutrophil_count` (`cpsam-v1` adds `*_possibly_merged`) | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` (`cpsam-v1` adds `possibly_merged`) |
+| Count / Combined | `dhcl8881` | `macrophage_count`, `neutrophil_count` | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` |
 | Cell N/C Ratio | `dhcl8881` | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2`, `cytoplasmic_area_um2`*, `nc_ratio`*, `classifier_score`, `crop_image` |
-| Cell N/C Ratio | `cpsam-v1` | `n_segmented`, `n_cells`, `n_excluded_*` per quality filter, means, `median_nc_ratio` | `result_image`, `cell_id`, `x`, `y`, `cell_area_um2`, `nuclear_area_um2`, `cytoplasmic_area_um2`, `nc_ratio`, `crop_image` |
+| Cell N/C Ratio | `cpsam-v1` | `n_segmented`, `n_cells`, `n_excluded_*` per quality filter, means, `median_nc_ratio` | `result_image`, `cell_id`, `x`, `y`, `cell_area_um2`, `nuclear_area_um2`, `cytoplasmic_area_um2` (cell − nucleus), `nc_ratio` (per `nc_denominator`), `crop_image` |
 
 \* In `dhcl8881`, `cytoplasmic_area_um2` is the whole segmented cell (nucleus included), so `nc_ratio` is nucleus ÷ whole cell. Kept as-is so the profile reproduces earlier results.
 
