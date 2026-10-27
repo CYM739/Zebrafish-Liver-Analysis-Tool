@@ -17,14 +17,13 @@ stage2模型參數 https://drive.google.com/file/d/1tXKcYGA_5wFxG2nL_ByL_E4cYYiA
 下載後解壓到cell資料夾下
 
 ```
-cd ./nhri/cell  #進入cell資料夾
-./main.py --mix_dir 圖片位置
-#注意 圖片檔名不能有空白 ex: channel red.jpg 檔名有空白會報錯
-#example python main.py --mix_dir ./4/4_channel_mix.tif
+# 在專案根目錄執行
+python -m cell.main --mix_dir 圖片位置
+#example python -m cell.main --mix_dir cell/4/4_channel_mix.tif
 ```
-會在sample資料夾產生每個細胞的細胞質分割範圍<br>
+會在sample資料夾產生每個細胞的細胞質分割範圍（檔名為細胞編號）<br>
 ![圖片](/cell/sample/0.jpg)<br>
-會在test資料夾產生整張圖片細胞的細胞質分割範圍和csv檔，csv檔內有每個細胞的細胞核面積和細胞質面積和胞質比。csv檔內最後一項為平均值
+會在test資料夾產生整張圖片細胞的細胞質分割範圍（每個細胞標上編號）和csv檔。test.csv 每列為一個細胞（編號、座標、細胞核面積、細胞質面積、核質比），test_summary.csv 為平均值
 ![圖片](/cell/test/test.jpg)<br>
 ## 實驗結果
 ![圖片](/cell/result.jpg)<br>

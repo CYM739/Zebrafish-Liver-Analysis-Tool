@@ -48,7 +48,7 @@ def greenandred(img, config=None):
 def find(img, config=None):
     if config is None:
         config = {}
-    kernel_size = config.get("blur_kernel", 3)
+    kernel_size = config.get("blur_kernel", 3) | 1  # GaussianBlur needs an odd size
     area_min = config.get("contour_area_min", 200)
 
     gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)

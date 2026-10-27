@@ -1,6 +1,29 @@
+from pathlib import Path
+
 import cv2
 import numpy as np
+from annotate import draw_labels
 from liver.utils import sortPoints, greenandred, find, inorout
+
+
+def _describe(contours, centers, prefix):
+    """One record per detected cell; IDs match the labels drawn by _annotate."""
+    return [{
+        "cell_id": f"{prefix}{n}",
+        "x": int(center[0][0]),
+        "y": int(center[0][1]),
+        "area_px": float(cv2.contourArea(c)),
+    } for n, (c, center) in enumerate(zip(contours, centers), start=1)]
+
+
+def _annotate(img, contours, cells):
+    out = img.copy()
+    cv2.drawContours(out, contours, -1, (255, 255, 255), 5)
+    labels = []
+    for c, cell in zip(contours, cells):
+        bx, by, bw, _ = cv2.boundingRect(c)
+        labels.append((cell["cell_id"], (bx + bw / 2, by)))
+    return draw_labels(out, labels, above=True)
 
 
 def count_cells(img, config=None):
@@ -11,7 +34,8 @@ def count_cells(img, config=None):
         config: dict with liver config values
 
     Returns:
-        dict with red_img, green_img, mac_count, neu_count
+        dict with red_img, green_img, macrophages, neutrophils (lists of per-cell
+        records), warning (i18n key or None)
     """
     if config is None:
         config = {}
@@ -20,8 +44,6 @@ def count_cells(img, config=None):
     mask_threshold_max = config.get("mask_threshold_max", 250)
     mask_blur_kernel = config.get("mask_blur_kernel", 13)
 
-    img1 = img.copy()
-    img_green = img.copy()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     ret, th1 = cv2.threshold(gray, mask_threshold, mask_threshold_max, cv2.THRESH_BINARY)
@@ -38,9 +60,9 @@ def count_cells(img, config=None):
         return {
             "red_img": img.copy(),
             "green_img": img.copy(),
-            "mac_count": 0,
-            "neu_count": 0,
-            "warning": "No liver region detected — not enough bright border points to form a mask. Is this a channel-mix image with a bright border?",
+            "macrophages": [],
+            "neutrophils": [],
+            "warning": "warn_no_liver_outline",
         }
 
     new_cnt = sortPoints(new_cnt)
@@ -59,14 +81,14 @@ def count_cells(img, config=None):
     red_mean = [np.mean(i, axis=0).astype(np.int32) for i in red_cnt]
     new_red_cnt, new_red_cnt_mean = inorout(red_cnt, red_mean, mask)
 
-    cv2.drawContours(img1, new_red_cnt, -1, (255, 255, 255), 5)
-    cv2.drawContours(img_green, new_green_cnt, -1, (255, 255, 255), 5)
+    macrophages = _describe(new_red_cnt, new_red_cnt_mean, "M")
+    neutrophils = _describe(new_green_cnt, new_green_cnt_mean, "N")
 
     return {
-        "red_img": img1,
-        "green_img": img_green,
-        "mac_count": len(new_red_cnt_mean),
-        "neu_count": len(new_green_cnt_mean),
+        "red_img": _annotate(img, new_red_cnt, macrophages),
+        "green_img": _annotate(img, new_green_cnt, neutrophils),
+        "macrophages": macrophages,
+        "neutrophils": neutrophils,
         "warning": None,
     }
 
@@ -80,8 +102,9 @@ if __name__ == '__main__':
     img = cv2.imread(args.mix_dir)
     result = count_cells(img)
 
-    cv2.imwrite("result/red.jpg", result["red_img"])
-    cv2.imwrite("result/green.jpg", result["green_img"])
-    with open('./result/output.txt', 'w') as f:
-        f.write('macrophage count:' + str(result["mac_count"]) + '\n')
-        f.write('neutrophil count:' + str(result["neu_count"]))
+    out_dir = Path(__file__).parent / "result"
+    cv2.imwrite(str(out_dir / "red.jpg"), result["red_img"])
+    cv2.imwrite(str(out_dir / "green.jpg"), result["green_img"])
+    with open(out_dir / "output.txt", 'w') as f:
+        f.write('macrophage count:' + str(len(result["macrophages"])) + '\n')
+        f.write('neutrophil count:' + str(len(result["neutrophils"])))
