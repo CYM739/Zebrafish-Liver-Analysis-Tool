@@ -16,7 +16,7 @@ from cell.model import Net, Unet
 
 _MODULE_DIR = Path(__file__).parent
 _CROP_HALF = 112  # half of the 224 px model input (200 px crop + 12 px padding per side)
-_SUMMARY_FIELDS = ("radius_px", "nuclear_area_um2", "cytoplasmic_area_um2", "nc_ratio")
+_SUMMARY_FIELDS = ("radius_px", "nuclear_area_um2", "cell_area_um2", "nc_ratio")
 
 
 def load_models(config=None, device=None):
@@ -113,7 +113,7 @@ def analyze_cells(img, models, config=None):
                 "y": int(cy - value),
                 "radius_px": int(r),
                 "nuclear_area_um2": nuclear_px * um2,
-                "cytoplasmic_area_um2": mask_px * um2,
+                "cell_area_um2": mask_px * um2,  # U-Net mask = whole cell, nucleus included
                 "nc_ratio": nuclear_px / max(mask_px, 1),
                 "classifier_score": score,
             })

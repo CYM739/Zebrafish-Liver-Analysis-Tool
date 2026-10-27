@@ -60,10 +60,10 @@ Every detected cell is numbered on the result image, and the same number appears
 | Tab | Profile | `*_summary.csv` (one row per image) | `*_cells.csv` (one row per cell) |
 |---|---|---|---|
 | Count / Combined | `dhcl8881` | `macrophage_count`, `neutrophil_count` | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` |
-| Cell N/C Ratio | `dhcl8881` | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2`, `cytoplasmic_area_um2`*, `nc_ratio`*, `classifier_score`, `crop_image` |
+| Cell N/C Ratio | `dhcl8881` | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2` (Hough circle πr²), `cell_area_um2`*, `nc_ratio` (nucleus ÷ whole cell), `classifier_score`, `crop_image` |
 | Cell N/C Ratio | `cpsam-v1` | `n_segmented`, `n_cells`, `n_excluded_*` per quality filter, means, `median_nc_ratio` | `result_image`, `cell_id`, `x`, `y`, `cell_area_um2`, `nuclear_area_um2`, `cytoplasmic_area_um2` (cell − nucleus), `nc_ratio` (per `nc_denominator`), `crop_image` |
 
-\* In `dhcl8881`, `cytoplasmic_area_um2` is the whole segmented cell (nucleus included), so `nc_ratio` is nucleus ÷ whole cell. Kept as-is so the profile reproduces earlier results.
+\* The whole U-Net mask, nucleus included. Earlier versions named this column `cytoplasmic_area_um2`; the values are unchanged.
 
 `x`, `y` are pixel coordinates in the original image. `result_image` / `crop_image` are file names inside the downloaded `.zip`.
 
