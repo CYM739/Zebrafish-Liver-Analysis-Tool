@@ -14,7 +14,7 @@ from PIL import Image
 
 from config import get_config, merge_overrides, profile_config
 from i18n import LANGUAGES, localize_columns, t
-from profiles import DEFAULT_PROFILE, PROFILES
+from profiles import DEFAULT_PROFILE, PROFILES, offered
 from profiles.base import BOOL, HSV, ModelUnavailable
 
 CONFIG = get_config()
@@ -170,13 +170,13 @@ TABS = [
 ]
 
 
-def make_handler(tab):
+def make_handler(tab, names):
     def run(lang, profile, files, *values, progress=gr.Progress()):
-        # Settings inputs cover every profile (see build_tab); keep only the selected profile's
+        # Settings inputs cover every offered profile (see build_tab); keep only the selected profile's
         values = iter(values)
-        cfgs = {name: {a: parse_settings(p.ANALYSES[a].settings, profile_config(name, a), values)
+        cfgs = {name: {a: parse_settings(PROFILES[name].ANALYSES[a].settings, profile_config(name, a), values)
                        for a in tab["analyses"]}
-                for name, p in PROFILES.items()}[profile]
+                for name in names}[profile]
         batch = Batch(lang, profile, cfgs)
         analyses = PROFILES[profile].ANALYSES
         for f in progress.tqdm(files or [], desc=batch.t("progress")):
@@ -251,9 +251,18 @@ def build_settings(tr, spec, defaults):
     return inputs
 
 
-def build_tab(tr, lang, profile, tab):
-    """Returns this tab's settings panels: {profile name: column shown only for that profile}."""
+def describe(lang, profile):
+    return t(f"profile_desc_{profile}", lang)
+
+
+def build_tab(tr, lang, tab):
+    names = offered(tab["analyses"])
     with tr(gr.Tab, tab["label"]):
+        with gr.Row(visible=len(names) > 1):  # method selector only where there is a choice
+            profile = tr.add(gr.Dropdown, lambda lang: {"label": t("profile", lang),
+                                                        "choices": [(t(f"profile_{n}", lang), n) for n in names]},
+                             value=DEFAULT_PROFILE, scale=0, min_width=260)
+            description = gr.Markdown(describe(tr.lang, DEFAULT_PROFILE))
         with gr.Row():
             with gr.Column(scale=4):
                 files = tr(gr.File, "upload", file_count="multiple", file_types=IMAGE_TYPES)
@@ -263,12 +272,12 @@ def build_tab(tr, lang, profile, tab):
 
         panels, settings = {}, []
         with tr(gr.Accordion, "advanced", open=False):
-            for name, p in PROFILES.items():
+            for name in names:
                 with gr.Column(visible=name == DEFAULT_PROFILE) as panels[name]:
                     for a in tab["analyses"]:
                         if len(tab["analyses"]) > 1:
                             tr(gr.Markdown, f"section_{a}", prop="value")
-                        settings += build_settings(tr, p.ANALYSES[a].settings, profile_config(name, a))
+                        settings += build_settings(tr, PROFILES[name].ANALYSES[a].settings, profile_config(name, a))
 
         outputs = {
             "warnings": gr.Markdown(""),
@@ -284,34 +293,25 @@ def build_tab(tr, lang, profile, tab):
                 outputs["csv"] = tr(gr.File, "csv", file_count="multiple")
             outputs["zip"] = tr(gr.File, "zip")
 
-        button.click(make_handler(tab), inputs=[lang, profile, files] + settings,
+        button.click(make_handler(tab, names), inputs=[lang, profile, files] + settings,
                      outputs=[outputs[k] for k in tab["outputs"]])
-    return panels
+        lang.change(describe, inputs=[lang, profile], outputs=[description])
+        profile.change(describe, inputs=[lang, profile], outputs=[description])
+        profile.change(lambda selected: [gr.update(visible=name == selected) for name in panels],
+                       inputs=[profile], outputs=list(panels.values()))
 
 
 def build_app():
     default_lang = APP_CFG["default_language"]
     tr = Translatable(default_lang)
-    profile_choices = lambda lang: [(t(f"profile_{name}", lang), name) for name in PROFILES]
-    describe = lambda lang, profile: t(f"profile_desc_{profile}", lang)
-
     with gr.Blocks(title="Zebrafish Liver Analysis Tool", delete_cache=(RETENTION_S, RETENTION_S)) as app:
         with gr.Row(equal_height=True):
-            with gr.Column(scale=1, min_width=320):  # wraps the selectors below the title on phones
+            with gr.Column(scale=1, min_width=320):  # wraps the language toggle below the title on phones
                 tr(gr.Markdown, "title", prop="value")
-            profile = tr.add(gr.Dropdown, lambda lang: {"label": t("profile", lang), "choices": profile_choices(lang)},
-                             value=DEFAULT_PROFILE, scale=0, min_width=260)
             lang = gr.Radio(LANGUAGES, value=default_lang, show_label=False, container=False, scale=0, min_width=200)
-        description = gr.Markdown(describe(default_lang, DEFAULT_PROFILE))
-
-        panels = [build_tab(tr, lang, profile, tab) for tab in TABS]
-        panel_list = [panel for tab_panels in panels for panel in tab_panels.values()]
-
+        for tab in TABS:
+            build_tab(tr, lang, tab)
         lang.change(tr.relabel, inputs=[lang], outputs=tr.components)
-        lang.change(describe, inputs=[lang, profile], outputs=[description])
-        profile.change(describe, inputs=[lang, profile], outputs=[description])
-        profile.change(lambda selected: [gr.update(visible=name == selected) for p in panels for name in p],
-                       inputs=[profile], outputs=panel_list)
     return app
 
 

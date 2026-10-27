@@ -1,7 +1,7 @@
 """Nuclear-to-cytoplasmic ratio from Cellpose-SAM cell and nucleus segmentation.
 
-Unlike dhcl8881 (cell/main.py), the cytoplasm excludes the nucleus: N/C = nucleus / (cell - nucleus),
-and both areas come from segmented shapes instead of a fitted circle.
+Unlike dhcl8881 (cell/main.py), both areas come from segmented shapes instead of a fitted circle.
+The N/C denominator follows config `nc_denominator` (see profiles.base.nc_ratio).
 """
 import functools
 import statistics
@@ -13,7 +13,7 @@ import torch
 from scipy import ndimage
 
 from annotate import draw_labels
-from profiles.base import ModelUnavailable, means, result
+from profiles.base import ModelUnavailable, means, nc_ratio, result
 
 _CHANNELS = {"blue": 0, "green": 1, "red": 2}  # BGR index of each stain
 _EXCLUDED_COLOR = (128, 128, 128)
@@ -102,12 +102,12 @@ def cell(img, cfg):
         if nuclear_px > cfg["max_nucleus_fraction"] * cell_px[label]:  # outline drawn around the nucleus only
             excluded["n_excluded_nucleus_only"] += 1
             continue
-        cytoplasm_px = cell_px[label] - nuclear_px
         kept.append(label)
         kept_nuclei.append(nucleus)
         records.append({"image": "segmentation", "cell_id": len(records) + 1, "x": int(cx), "y": int(cy),
                         "cell_area_um2": cell_px[label] * um2, "nuclear_area_um2": nuclear_px * um2,
-                        "cytoplasmic_area_um2": cytoplasm_px * um2, "nc_ratio": nuclear_px / max(cytoplasm_px, 1)})
+                        "cytoplasmic_area_um2": (cell_px[label] - nuclear_px) * um2,
+                        "nc_ratio": nc_ratio(nuclear_px, cell_px[label], cfg["nc_denominator"])})
 
     vis = img.copy()
     _outline(vis, cells, [l for l in labels if l not in kept], _EXCLUDED_COLOR)

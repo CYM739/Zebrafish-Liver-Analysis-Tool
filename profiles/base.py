@@ -35,6 +35,16 @@ def result(images=(), cells=(), crops=(), summary=None, warning=None, **warning_
             "warning": warning, "warning_args": warning_args}
 
 
+# N/C denominator, set per profile by config `nc_denominator`. Both definitions appear in the literature;
+# "cell" counts cytoplasm above/below the nucleus (cells are 3D), "cytoplasm" uses the 2D area outside it.
+_NC_DENOMINATORS = {"cell": lambda nucleus, cell: cell, "cytoplasm": lambda nucleus, cell: cell - nucleus}
+
+
+def nc_ratio(nucleus, cell, denominator):
+    """Nucleus area ÷ whole cell area ("cell") or ÷ (cell − nucleus) area ("cytoplasm")."""
+    return nucleus / max(_NC_DENOMINATORS[denominator](nucleus, cell), 1)
+
+
 def means(records, fields):
     """mean_<field> of each field over the records (None when there are none)."""
     return {f"mean_{f}": statistics.mean(r[f] for r in records) if records else None for f in fields}

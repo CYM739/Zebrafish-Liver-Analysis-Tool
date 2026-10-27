@@ -2,16 +2,16 @@
 
 All changes relative to the [original repository](https://github.com/dhcl8881/nhri) by dhcl8881.
 
-## [Unreleased] - 2026-10-22 (profiles)
+## [Unreleased] - 2026-10-24 (profiles)
 
 ### Added
 
-- **Analysis profiles** (`profiles/`): a selector at the top of the page picks a complete set of algorithms and models. Settings per profile live under `profiles:` in `config.yaml`. Every CSV row records the profile, and the `.zip` includes `*_settings.json` with the exact settings used.
+- **Analysis profiles** (`profiles/`): each is a complete set of algorithms and models. Settings per profile live under `profiles:` in `config.yaml`; `offered_in_app` limits which analyses a profile can be picked for, and tabs with more than one offered profile show a method selector. Every CSV row records the profile, and the `.zip` includes `*_settings.json` with the exact settings used.
   - `dhcl8881` (default): the original author's code (`liver/`, `liver1/`, `cell/`), unchanged. Verified to reproduce the original's counts and every per-cell measurement on all sample images.
-  - `cpsam-v1`: the first improved profile (`profiles/cpsam_v1/`):
-    - **N/C ratio** by Cellpose-SAM (`cpsam_v2`) cell and nucleus segmentation; N/C = nucleus ÷ (cell − nucleus). Quality filters, all adjustable: exclude cells cut off by the image edge, out-of-focus cells, cells without exactly one nucleus, and outlines drawn around the nucleus only. The summary adds the median N/C.
-    - **Counting**: scale-bar exclusion compares x with the width and y with the height; red uses both hue ranges (0–10, 170–179); green is limited to hues 40–90. Possibly merged cells (≥ 3× the image's median area) are outlined in orange and flagged in the CSV; they are not split.
-    - **Boundary**: each green region is outlined separately (no lines across the image).
+  - `cpsam-v1`: the first improved profile (`profiles/cpsam_v1/`), offered in the app for the N/C ratio only:
+    - **N/C ratio** by Cellpose-SAM (`cpsam_v2`) cell and nucleus segmentation. N/C denominator set by `nc_denominator` (dev-side, not in the app): `cell` (default) = nucleus ÷ whole cell, `cytoplasm` = nucleus ÷ (cell − nucleus). Quality filters, all adjustable: exclude cells cut off by the image edge, out-of-focus cells, cells without exactly one nucleus, and outlines drawn around the nucleus only. The summary adds the median N/C.
+    - **Counting** (dev-only until validated): scale-bar exclusion compares x with the width and y with the height; red uses both hue ranges (0–10, 170–179); green is limited to hues 40–90. Possibly merged cells (≥ 3× the image's median area) are outlined in orange and flagged in the CSV; they are not split.
+    - **Boundary** (dev-only until validated): each green region is outlined separately (no lines across the image).
 - `cellpose==4.2.1.1` and `scipy` dependencies.
 
 ### Changed
