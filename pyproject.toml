@@ -7,12 +7,14 @@ requires-python = "==3.10.*"
 dependencies = [
     "torch==2.11.0",
     "torchvision==0.26.0",
-    "opencv-python==4.13.0.92",
+    "opencv-python-headless==4.13.0.92",  # cellpose requires the headless build; both provide cv2
     "gradio==6.12.0",
     "numpy==2.2.6",
     "pillow==12.2.0",
     "pandas==2.3.3",
     "pyyaml==6.0.3",
+    "scipy==1.15.3",
+    "cellpose==4.2.1.1",
 ]
 
 [[tool.uv.index]]

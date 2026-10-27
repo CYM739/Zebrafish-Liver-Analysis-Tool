@@ -2,28 +2,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from annotate import draw_labels
+from annotate import contour_records, draw_contours
 from liver.utils import sortPoints, greenandred, find, inorout
-
-
-def _describe(contours, centers, prefix):
-    """One record per detected cell; IDs match the labels drawn by _annotate."""
-    return [{
-        "cell_id": f"{prefix}{n}",
-        "x": int(center[0][0]),
-        "y": int(center[0][1]),
-        "area_px": float(cv2.contourArea(c)),
-    } for n, (c, center) in enumerate(zip(contours, centers), start=1)]
-
-
-def _annotate(img, contours, cells):
-    out = img.copy()
-    cv2.drawContours(out, contours, -1, (255, 255, 255), 5)
-    labels = []
-    for c, cell in zip(contours, cells):
-        bx, by, bw, _ = cv2.boundingRect(c)
-        labels.append((cell["cell_id"], (bx + bw / 2, by)))
-    return draw_labels(out, labels, above=True)
 
 
 def count_cells(img, config=None):
@@ -81,12 +61,12 @@ def count_cells(img, config=None):
     red_mean = [np.mean(i, axis=0).astype(np.int32) for i in red_cnt]
     new_red_cnt, new_red_cnt_mean = inorout(red_cnt, red_mean, mask)
 
-    macrophages = _describe(new_red_cnt, new_red_cnt_mean, "M")
-    neutrophils = _describe(new_green_cnt, new_green_cnt_mean, "N")
+    macrophages = contour_records(new_red_cnt, "M")
+    neutrophils = contour_records(new_green_cnt, "N")
 
     return {
-        "red_img": _annotate(img, new_red_cnt, macrophages),
-        "green_img": _annotate(img, new_green_cnt, neutrophils),
+        "red_img": draw_contours(img, new_red_cnt, macrophages),
+        "green_img": draw_contours(img, new_green_cnt, neutrophils),
         "macrophages": macrophages,
         "neutrophils": neutrophils,
         "warning": None,
