@@ -14,6 +14,20 @@ STRINGS = {
     "btn_cell": {"en": "Analyze Cells", "zh": "分析細胞"},
     "btn_combined": {"en": "Run Combined Analysis", "zh": "執行綜合分析"},
 
+    # Analysis profiles
+    "profile": {"en": "Analysis method", "zh": "分析方法"},
+    "profile_dhcl8881": {"en": "Original (dhcl8881)", "zh": "原作者版本（dhcl8881）"},
+    "profile_cpsam-v1": {"en": "Improved v1 (Cellpose-SAM)", "zh": "改良版 v1（Cellpose-SAM）"},
+    "profile_desc_dhcl8881": {
+        "en": "The original author's methods and models, unchanged. Results match earlier versions of this tool.",
+        "zh": "原作者的分析方法與模型，未做任何修改，結果與本工具先前版本相同。"},
+    "profile_desc_cpsam-v1": {
+        "en": "Fixes known issues of the original. The N/C ratio uses Cellpose-SAM and excludes the nucleus "
+              "from the cytoplasm; cells that may be several touching cells are outlined in orange for review. "
+              "The first N/C analysis downloads a 1.2 GB model; without a GPU each image takes 1–2 minutes.",
+        "zh": "修正原版的已知問題。核質比改用 Cellpose-SAM，細胞質面積不再包含細胞核；可能是多個細胞黏在一起的偵測會以橘色外框標示，方便檢查。"
+              "第一次分析核質比時需下載約 1.2 GB 模型；沒有 GPU 時每張影像約需 1–2 分鐘。"},
+
     # Shared components
     "upload": {"en": "Upload Images", "zh": "上傳影像"},
     "preview": {"en": "Image Preview", "zh": "影像預覽"},
@@ -28,10 +42,12 @@ STRINGS = {
     "progress": {"en": "Analyzing images", "zh": "影像分析中"},
 
     # Settings
-    "section_liver1": {"en": "### Boundary Detection", "zh": "### 範圍偵測"},
-    "section_liver": {"en": "### Cell Counting", "zh": "### 細胞計數"},
+    "section_boundary": {"en": "### Boundary Detection", "zh": "### 範圍偵測"},
+    "section_count": {"en": "### Cell Counting", "zh": "### 細胞計數"},
     "hsv_neutrophil": {"en": "**Green (neutrophil) color range (HSV)**", "zh": "**綠色（嗜中性球）顏色範圍 (HSV)**"},
     "hsv_macrophage": {"en": "**Red (macrophage) color range (HSV)**", "zh": "**紅色（巨噬細胞）顏色範圍 (HSV)**"},
+    "hsv_macrophage_2": {"en": "**Red (macrophage) color range 2 (HSV, hues near 179)**",
+                         "zh": "**紅色（巨噬細胞）顏色範圍 2（HSV，色相接近 179 的紅色）**"},
     "hsv_liver": {"en": "**Green (liver) color range (HSV)**", "zh": "**綠色（肝臟）顏色範圍 (HSV)**"},
     "hsv_lower": {"en": "{ch} lower", "zh": "{ch} 下限"},
     "hsv_upper": {"en": "{ch} upper", "zh": "{ch} 上限"},
@@ -45,12 +61,24 @@ STRINGS = {
     "hough_param2": {"en": "Nucleus roundness", "zh": "細胞核圓度要求"},
     "hough_min_radius": {"en": "Minimum nucleus radius (px)", "zh": "最小細胞核半徑（像素）"},
     "hough_max_radius": {"en": "Maximum nucleus radius (px)", "zh": "最大細胞核半徑（像素）"},
+    "merged_area_factor": {"en": "Flag as possibly merged at (× median area)", "zh": "面積達中位數幾倍時標示為可能黏連"},
+    "cp_diameter": {"en": "Typical cell diameter (px, 0 = automatic)", "zh": "細胞直徑（像素，0 = 自動）"},
+    "cp_cellprob_threshold": {"en": "Cell detection threshold (lower finds more cells)", "zh": "細胞判定門檻（越低找到越多細胞）"},
+    "cp_flow_threshold": {"en": "Cell shape tolerance (higher accepts more shapes)", "zh": "細胞形狀容許度（越高接受越多形狀）"},
+    "cp_exclude_border": {"en": "Exclude cells cut off by the image edge", "zh": "排除被影像邊緣切到的細胞"},
+    "cp_min_relative_brightness": {"en": "Exclude cells dimmer than (fraction of the median cell)",
+                                   "zh": "亮度低於中位數細胞此比例時排除（失焦）"},
+    "cp_max_nucleus_fraction": {"en": "Exclude cells whose nucleus fills more than (fraction of cell)",
+                                "zh": "細胞核佔細胞面積超過此比例時排除"},
 
     # Result captions
     "cap_macrophages": {"en": "Macrophages ({n}) · {name}", "zh": "巨噬細胞（{n}）· {name}"},
     "cap_neutrophils": {"en": "Neutrophils ({n}) · {name}", "zh": "嗜中性球（{n}）· {name}"},
+    "cap_macrophages_flagged": {"en": "Macrophages ({n}, {flagged} flagged) · {name}", "zh": "巨噬細胞（{n}，{flagged} 個待檢查）· {name}"},
+    "cap_neutrophils_flagged": {"en": "Neutrophils ({n}, {flagged} flagged) · {name}", "zh": "嗜中性球（{n}，{flagged} 個待檢查）· {name}"},
     "cap_boundary": {"en": "Liver boundary · {name}", "zh": "肝臟範圍 · {name}"},
     "cap_segmentation": {"en": "Cytoplasm segmentation ({n} cells) · {name}", "zh": "細胞質分割（{n} 個細胞）· {name}"},
+    "cap_cells_nuclei": {"en": "Cells and nuclei ({n} cells) · {name}", "zh": "細胞與細胞核分割（{n} 個細胞）· {name}"},
     "cap_all_nuclei": {"en": "All detected nuclei ({n}) · {name}", "zh": "所有偵測到的細胞核（{n}）· {name}"},
     "cap_cell": {"en": "#{id} · {name}", "zh": "#{id} · {name}"},
 
@@ -69,8 +97,24 @@ STRINGS = {
     "warn_no_cells_passed": {
         "en": "{n} nuclei were found, but none passed the cell detection threshold ({threshold}).",
         "zh": "找到 {n} 個細胞核，但沒有任何一個達到細胞判定門檻（{threshold}）。"},
+    "warn_no_cells_found": {
+        "en": "No cells found. Check the image, or lower the cell detection threshold in Advanced Settings.",
+        "zh": "找不到細胞。請確認影像，或在進階設定中調低細胞判定門檻。"},
+    "warn_no_cells_passed_qc": {
+        "en": "{n} cells were found, but none passed the quality filters (fully inside the image, in focus, exactly one nucleus, visible cytoplasm).",
+        "zh": "找到 {n} 個細胞，但沒有任何一個通過品質篩選（完整位於影像內、未失焦、恰好一個細胞核、可見細胞質）。"},
+    "warn_model_missing": {
+        "en": "The analysis model files are not installed. Please ask the administrator to install them (see the README).",
+        "zh": "尚未安裝分析模型檔。請聯絡管理員依說明文件安裝。"},
+    "warn_model_download_failed": {
+        "en": "The Cellpose-SAM model could not be downloaded. Check the internet connection, or ask the administrator to install it.",
+        "zh": "無法下載 Cellpose-SAM 模型。請確認網路連線，或聯絡管理員安裝。"},
+    "warn_unexpected_error": {
+        "en": "This image could not be analyzed because of an unexpected error.",
+        "zh": "分析此影像時發生未預期的錯誤。"},
 
     # Table columns (CSV files keep the English column keys)
+    "col_profile": {"en": "Method", "zh": "分析方法"},
     "col_filename": {"en": "File", "zh": "檔名"},
     "col_result_image": {"en": "Result image", "zh": "結果圖"},
     "col_cell_type": {"en": "Cell type", "zh": "細胞類型"},
@@ -82,15 +126,26 @@ STRINGS = {
     "col_nuclear_area_um2": {"en": "Nuclear area (µm²)", "zh": "細胞核面積 (µm²)"},
     "col_cytoplasmic_area_um2": {"en": "Cytoplasmic area (µm²)", "zh": "細胞質面積 (µm²)"},
     "col_nc_ratio": {"en": "N/C ratio", "zh": "核質比"},
+    "col_cell_area_um2": {"en": "Cell area (µm²)", "zh": "細胞面積 (µm²)"},
+    "col_possibly_merged": {"en": "Possibly merged", "zh": "可能黏連"},
     "col_classifier_score": {"en": "Detection score", "zh": "判定分數"},
     "col_crop_image": {"en": "Cell image", "zh": "單一細胞圖"},
     "col_macrophage_count": {"en": "Macrophages", "zh": "巨噬細胞數"},
     "col_neutrophil_count": {"en": "Neutrophils", "zh": "嗜中性球數"},
+    "col_macrophage_possibly_merged": {"en": "Macrophages flagged", "zh": "待檢查巨噬細胞數"},
+    "col_neutrophil_possibly_merged": {"en": "Neutrophils flagged", "zh": "待檢查嗜中性球數"},
+    "col_n_segmented": {"en": "Cells found", "zh": "分割出的細胞數"},
+    "col_n_excluded_edge": {"en": "Excluded: at image edge", "zh": "排除：位於影像邊緣"},
+    "col_n_excluded_dim": {"en": "Excluded: out of focus", "zh": "排除：失焦過暗"},
+    "col_n_excluded_nucleus": {"en": "Excluded: not exactly one nucleus", "zh": "排除：細胞核數不為 1"},
+    "col_n_excluded_nucleus_only": {"en": "Excluded: outline around nucleus only", "zh": "排除：外框只圈到細胞核"},
+    "col_median_nc_ratio": {"en": "Median N/C ratio", "zh": "核質比中位數"},
     "col_n_candidates": {"en": "Nuclei found", "zh": "偵測到的細胞核數"},
     "col_n_cells": {"en": "Cells analyzed", "zh": "有效細胞數"},
     "col_mean_radius_px": {"en": "Mean nucleus radius (px)", "zh": "平均細胞核半徑（像素）"},
     "col_mean_nuclear_area_um2": {"en": "Mean nuclear area (µm²)", "zh": "平均細胞核面積 (µm²)"},
     "col_mean_cytoplasmic_area_um2": {"en": "Mean cytoplasmic area (µm²)", "zh": "平均細胞質面積 (µm²)"},
+    "col_mean_cell_area_um2": {"en": "Mean cell area (µm²)", "zh": "平均細胞面積 (µm²)"},
     "col_mean_nc_ratio": {"en": "Mean N/C ratio", "zh": "平均核質比"},
 }
 

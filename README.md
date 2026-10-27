@@ -10,11 +10,19 @@ uv sync
 
 ### Model Weights
 
-Download and place in `cell/`:
+**dhcl8881 profile** — download and place in `cell/`:
 - `save1.pt` (ResNet18 classifier, ~47MB)
 - `save_mask.pt` (U-Net segmenter, ~168MB)
 
 These are available from the [original author's Google Drive](https://github.com/dhcl8881/nhri) (see original repo for link).
+
+**cpsam-v1 profile** — the Cellpose-SAM model (`cpsam_v2`, ~1.15GB) is downloaded to `~/.cellpose/models` on first use. To install it in advance (e.g. for an offline machine):
+
+```bash
+uv run python -c "from cellpose import models; models.CellposeModel(pretrained_model='cpsam_v2')"
+```
+
+The Cellpose code is BSD-licensed, but its pretrained models are trained on CC-BY-NC data: fine for academic research, not for commercial use.
 
 ### Run
 
@@ -25,27 +33,41 @@ Or double-click `start.bat` on Windows.
 
 Opens at http://localhost:7860. Server address, port, default UI language (中文 / English) and how long results are kept are set in the `app` section of `config.yaml`.
 
+## Analysis profiles
+
+A profile is a complete set of algorithms and models. Pick one from the selector at the top of the page; each result CSV records the profile in its `profile` column, and the `.zip` includes `*_settings.json` with every setting used.
+
+| Profile | What it is |
+|---|---|
+| `dhcl8881` (default) | The original author's algorithms and models, unchanged (`liver/`, `liver1/`, `cell/`). Reproduces earlier results exactly. |
+| `cpsam-v1` | Fixes the confirmed issues of `dhcl8881` (`profiles/cpsam_v1/`): N/C ratio from Cellpose-SAM cell + nucleus segmentation with the nucleus excluded from the cytoplasm; corrected scale-bar exclusion; both red hue ranges; boundary regions outlined separately; possibly merged cells flagged in orange. Its N/C values differ substantially from `dhcl8881` and have not yet been validated against manual annotation. |
+
+Profile settings live under `profiles:` in `config.yaml`; the default profile is `default_profile`. To add a profile, add a module under `profiles/` that defines `NAME` and `ANALYSES` (see `profiles/base.py`), register it in `profiles/__init__.py`, and add its section to `config.yaml` and its labels to `i18n.py`.
+
 ## Tabs
 
 1. **Neutrophil / Macrophage Count** — counts green (neutrophil) and red (macrophage) cells in liver region
 2. **Liver Boundary Detection** — detects liver outline from green fluorescence
-3. **Cell N/C Ratio** — nuclear-to-cytoplasmic area ratio using ResNet18 + U-Net
+3. **Cell N/C Ratio** — nuclear-to-cytoplasmic area ratio (`dhcl8881`: ResNet18 + U-Net; `cpsam-v1`: Cellpose-SAM)
 4. **Combined** — boundary detection + cell counting in one pass
 
 ## Output files
 
-Every detected cell is numbered on the result image, and the same number appears in the CSV:
+Every detected cell is numbered on the result image, and the same number appears in the CSV. All rows start with `profile`, `filename`.
 
-| Tab | `*_summary.csv` (one row per image) | `*_cells.csv` (one row per cell) |
-|---|---|---|
-| Count / Combined | `macrophage_count`, `neutrophil_count` | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` |
-| Cell N/C Ratio | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2`, `cytoplasmic_area_um2`, `nc_ratio`, `classifier_score`, `crop_image` |
+| Tab | Profile | `*_summary.csv` (one row per image) | `*_cells.csv` (one row per cell) |
+|---|---|---|---|
+| Count / Combined | both | `macrophage_count`, `neutrophil_count` (`cpsam-v1` adds `*_possibly_merged`) | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` (`cpsam-v1` adds `possibly_merged`) |
+| Cell N/C Ratio | `dhcl8881` | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2`, `cytoplasmic_area_um2`*, `nc_ratio`*, `classifier_score`, `crop_image` |
+| Cell N/C Ratio | `cpsam-v1` | `n_segmented`, `n_cells`, `n_excluded_*` per quality filter, means, `median_nc_ratio` | `result_image`, `cell_id`, `x`, `y`, `cell_area_um2`, `nuclear_area_um2`, `cytoplasmic_area_um2`, `nc_ratio`, `crop_image` |
+
+\* In `dhcl8881`, `cytoplasmic_area_um2` is the whole segmented cell (nucleus included), so `nc_ratio` is nucleus ÷ whole cell. Kept as-is so the profile reproduces earlier results.
 
 `x`, `y` are pixel coordinates in the original image. `result_image` / `crop_image` are file names inside the downloaded `.zip`.
 
 ## Command line
 
-Run from the repository root, e.g. `uv run python -m liver.main --mix_dir liver/1/1_channel_mix.tif` (also `liver1.main`, `cell.main`).
+The original (`dhcl8881`) scripts run from the repository root, e.g. `uv run python -m liver.main --mix_dir liver/1/1_channel_mix.tif` (also `liver1.main`, `cell.main`).
 
 ---
 

@@ -1,36 +1,75 @@
-liver:
-  hsv_green_lower: [40, 70, 30]
-  hsv_green_upper: [255, 255, 255]
-  hsv_red1_lower: [0, 70, 50]
-  hsv_red1_upper: [10, 255, 255]
-  hsv_red2_lower: [170, 70, 50]
-  hsv_red2_upper: [180, 255, 255]
-  contour_area_min: 200
-  blur_kernel: 3
-  mask_threshold: 249
-  mask_threshold_max: 250
-  mask_blur_kernel: 13
+# Analysis profiles: each one is a complete set of algorithms + models (see profiles/).
+# The app's profile selector starts on default_profile.
+default_profile: dhcl8881
 
-liver1:
-  hsv_green_lower: [36, 25, 25]
-  hsv_green_upper: [100, 255, 255]
-  contour_area_min: 20
+profiles:
+  # Original author's algorithms and models, unchanged. Values are those of the original code.
+  dhcl8881:
+    count:
+      hsv_green_lower: [40, 70, 30]
+      hsv_green_upper: [255, 255, 255]
+      hsv_red1_lower: [0, 70, 50]
+      hsv_red1_upper: [10, 255, 255]
+      hsv_red2_lower: [170, 70, 50]   # computed but not used by the original algorithm
+      hsv_red2_upper: [180, 255, 255]
+      contour_area_min: 200
+      blur_kernel: 3
+      mask_threshold: 249
+      mask_threshold_max: 250
+      mask_blur_kernel: 13
+    boundary:
+      hsv_green_lower: [36, 25, 25]
+      hsv_green_upper: [100, 255, 255]
+      contour_area_min: 20
+    cell:
+      confidence_threshold: 0.75
+      segmentation_threshold: 0.9
+      um_conversion: 0.181
+      padding: 100
+      hough_dp: 1
+      hough_min_dist_divisor: 64
+      hough_param1: 50
+      hough_param2: 0.8
+      hough_min_radius: 1
+      hough_max_radius: 60
+      lab_lower: [70, 70, 70]
+      lab_upper: [190, 255, 255]
+      blur_kernel: 5
+      median_blur_kernel: 7
 
-cell:
-  confidence_threshold: 0.75
-  segmentation_threshold: 0.9
-  um_conversion: 0.181
-  padding: 100
-  hough_dp: 1
-  hough_min_dist_divisor: 64
-  hough_param1: 50
-  hough_param2: 0.8
-  hough_min_radius: 1
-  hough_max_radius: 60
-  lab_lower: [70, 70, 70]
-  lab_upper: [190, 255, 255]
-  blur_kernel: 5
-  median_blur_kernel: 7
+  # Fixed known issues; N/C ratio by Cellpose-SAM. See CHANGELOG for what differs from dhcl8881.
+  cpsam-v1:
+    count:
+      hsv_green_lower: [40, 70, 30]
+      hsv_green_upper: [90, 255, 255]  # green hues only
+      hsv_red1_lower: [0, 70, 50]
+      hsv_red1_upper: [10, 255, 255]
+      hsv_red2_lower: [170, 70, 50]    # red wraps around the hue circle: both ranges are used
+      hsv_red2_upper: [179, 255, 255]
+      contour_area_min: 200
+      blur_kernel: 3
+      mask_threshold: 249
+      mask_threshold_max: 250
+      mask_blur_kernel: 13
+      scalebar_corner: 0.95            # outline points beyond this fraction of width AND height are the scale bar
+      merged_area_factor: 3.0          # flag cells this many times the image's median area as possibly merged
+      merged_min_cells: 5              # need at least this many cells of a type for a meaningful median
+    boundary:
+      hsv_green_lower: [36, 25, 25]
+      hsv_green_upper: [100, 255, 255]
+      contour_area_min: 20
+    cell:
+      model: cpsam_v2                  # Cellpose-SAM weights; downloaded on first use
+      um_conversion: 0.181
+      cell_channel: blue               # stain of the cell bodies / membranes
+      nucleus_channel: red             # stain of the nuclei in the channel-mix image
+      diameter: 0                      # typical cell diameter in px; 0 = automatic
+      flow_threshold: 0.4
+      cellprob_threshold: 0.0
+      nucleus_overlap_min: 0.5         # a nucleus belongs to the cell holding at least this fraction of it
+      max_nucleus_fraction: 0.8        # above this, the cell outline was drawn around the nucleus only
+      min_relative_brightness: 0.5     # skip cells dimmer than this fraction of the image's median cell (out of focus)
+      exclude_border: true             # skip cells cut off by the image edge
 
 app:
   server_name: 0.0.0.0        # reachable from other computers on the LAN
@@ -40,4 +79,5 @@ app:
 
 annotation:
   label_color: [0, 255, 255]  # BGR (yellow)
+  flag_color: [0, 165, 255]   # BGR (orange): outline of cells flagged for review
   font_scale_per_1000px: 0.7

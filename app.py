@@ -1,3 +1,5 @@
+import json
+import logging
 import shutil
 import tempfile
 import time
@@ -10,51 +12,19 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from config import get_config, merge_overrides
+from config import get_config, merge_overrides, profile_config
 from i18n import LANGUAGES, localize_columns, t
-from liver.main import count_cells
-from liver1.main import detect_boundary
-from cell.main import load_models, analyze_cells, summarize_cells
+from profiles import DEFAULT_PROFILE, PROFILES
+from profiles.base import BOOL, HSV, ModelUnavailable
 
 CONFIG = get_config()
 APP_CFG = CONFIG["app"]
 RETENTION_S = APP_CFG["result_retention_minutes"] * 60
 IMAGE_TYPES = [".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"]
-
-# Load cell models once at startup
-print("Loading cell analysis models...")
-CELL_MODELS = load_models(CONFIG["cell"])
-print("Models loaded.")
+HSV_MAX = (179, 255, 255)  # 8-bit OpenCV hue only spans 0-179
+log = logging.getLogger(__name__)
 
 _TMPDIR = Path(tempfile.mkdtemp(prefix="nhri_"))
-
-# Tunable settings shown under "Advanced Settings"; defaults come from config.yaml.
-# Entry: (config key, i18n key, (min, max, step) | HSV | None). HSV is a <key>_lower/<key>_upper
-# pair of [H, S, V] lists; None is a free number input.
-HSV = "hsv"
-HSV_MAX = (179, 255, 255)  # 8-bit OpenCV hue only spans 0-179
-SETTINGS = {
-    "liver": [
-        ("hsv_green", "hsv_neutrophil", HSV),
-        ("hsv_red1", "hsv_macrophage", HSV),
-        ("contour_area_min", "contour_area_min", (10, 2000, 10)),
-        ("blur_kernel", "blur_kernel", (1, 31, 2)),
-        ("mask_threshold", "mask_threshold", (200, 255, 1)),
-    ],
-    "liver1": [
-        ("hsv_green", "hsv_liver", HSV),
-        ("contour_area_min", "contour_area_min", (1, 500, 1)),
-    ],
-    "cell": [
-        ("confidence_threshold", "confidence_threshold", (0.1, 1.0, 0.05)),
-        ("segmentation_threshold", "segmentation_threshold", (0.1, 1.0, 0.05)),
-        ("um_conversion", "um_conversion", None),
-        ("hough_param1", "hough_param1", (10, 300, 1)),
-        ("hough_param2", "hough_param2", (0.1, 1.0, 0.05)),
-        ("hough_min_radius", "hough_min_radius", (1, 30, 1)),
-        ("hough_max_radius", "hough_max_radius", (10, 200, 1)),
-    ],
-}
 
 
 def new_run_dir():
@@ -93,25 +63,26 @@ def preview_uploads(files):
     return previews
 
 
-def parse_settings(section, values):
+def parse_settings(spec, defaults, values):
     """Inverse of build_settings: consume UI values from an iterator into a config dict."""
-    defaults = CONFIG[section]
     overrides = {}
-    for key, _, rng in SETTINGS[section]:
-        if rng == HSV:
+    for key, _, kind in spec:
+        if kind == HSV:
             for bound in ("lower", "upper"):
                 overrides[f"{key}_{bound}"] = [int(next(values)) for _ in range(3)]
         else:
             value = next(values)  # None (cleared number box) falls back to the config default
             overrides[key] = None if value is None else type(defaults[key])(value)
-    return merge_overrides(section, overrides)
+    return merge_overrides(defaults, overrides)
 
 
 class Batch:
     """Collects the outputs of one analysis run."""
 
-    def __init__(self, lang):
+    def __init__(self, lang, profile, settings):
         self.lang = lang
+        self.profile = profile
+        self.settings = settings
         self.dir = new_run_dir()
         self.gallery, self.crops, self.summary, self.details, self.warnings = [], [], [], [], []
         self._stems = set()
@@ -125,6 +96,11 @@ class Batch:
         stem = Path(src).stem
         self.stem = f"{stem}_{len(self._stems)}" if stem in self._stems else stem
         self._stems.add(self.stem)
+        self.row = {}
+
+    def end(self):
+        if self.row:
+            self.summary.append({"profile": self.profile, "filename": self.filename, **self.row})
 
     def save(self, img, suffix, caption, gallery=None):
         """Save a result image, show it in a gallery and return its file name for the CSV."""
@@ -132,12 +108,27 @@ class Batch:
         (self.gallery if gallery is None else gallery).append((path, caption))
         return Path(path).name
 
+    def add(self, r):
+        """Record one analysis result (see profiles.base.result) for the current file."""
+        names = {suffix: self.save(img, suffix, self.t(caption, name=self.stem, **args))
+                 for suffix, caption, img, args in r["images"]}
+        crops = r["crops"] or [None] * len(r["cells"])
+        for cell, crop in zip(r["cells"], crops):
+            row = {"profile": self.profile, "filename": self.filename, "result_image": names[cell["image"]]}
+            row.update({k: v for k, v in cell.items() if k != "image"})
+            if crop is not None:
+                row["crop_image"] = self.save(crop, f"cell_{cell['cell_id']}",
+                                              self.t("cap_cell", name=self.stem, id=cell["cell_id"]), gallery=self.crops)
+            self.details.append(row)
+        self.row.update(r["summary"])
+        self.warn(r["warning"], **r["warning_args"])
+
     def warn(self, key, **kwargs):
         if key:
             self.warnings.append(f"**{self.filename}**: {self.t(key, **kwargs)}")
 
     def outputs(self, prefix):
-        """Write CSVs and the zip; return everything a tab can display."""
+        """Write CSVs, the settings used and the zip; return everything a tab can display."""
         tables = {"summary": pd.DataFrame(self.summary).round(4),
                   "cells": pd.DataFrame(self.details).round(4)}
         csvs = []
@@ -149,9 +140,12 @@ class Batch:
         files = [p for p, _ in self.gallery + self.crops] + csvs
         zip_path = None
         if files:
+            settings_path = self.dir / f"{prefix}_settings.json"
+            settings_path.write_text(json.dumps({"profile": self.profile, "settings": self.settings},
+                                                indent=2, ensure_ascii=False), encoding="utf-8")
             zip_path = str(self.dir / f"{prefix}_results.zip")
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for p in files:
+                for p in files + [str(settings_path)]:
                     zf.write(p, Path(p).name)
         return {
             "warnings": "\n".join([self.t("warnings")] + [f"- {w}" for w in self.warnings]) if self.warnings else "",
@@ -164,77 +158,43 @@ class Batch:
         }
 
 
-# ---------------------------------------------------------------------------
-# Per-image analyses
-# ---------------------------------------------------------------------------
-def process_count(batch, img, cfgs):
-    r = count_cells(img, cfgs["liver"])
-    batch.warn(r["warning"])
-    for cell_type, image_key, cells_key, caption in (
-            ("macrophage", "red_img", "macrophages", "cap_macrophages"),
-            ("neutrophil", "green_img", "neutrophils", "cap_neutrophils")):
-        cells = r[cells_key]
-        result_image = batch.save(r[image_key], cells_key, batch.t(caption, name=batch.stem, n=len(cells)))
-        batch.details += [{"filename": batch.filename, "result_image": result_image, "cell_type": cell_type, **c}
-                          for c in cells]
-    batch.summary.append({"filename": batch.filename,
-                          "macrophage_count": len(r["macrophages"]),
-                          "neutrophil_count": len(r["neutrophils"])})
-
-
-def process_boundary(batch, img, cfgs):
-    r = detect_boundary(img, cfgs["liver1"])
-    batch.warn(r["warning"])
-    batch.save(r["output_img"], "boundary", batch.t("cap_boundary", name=batch.stem))
-
-
-def process_combined(batch, img, cfgs):
-    process_boundary(batch, img, cfgs)
-    process_count(batch, img, cfgs)
-
-
-def process_cell(batch, img, cfgs):
-    cfg = cfgs["cell"]
-    r = analyze_cells(img, CELL_MODELS, cfg)
-    batch.warn(r["warning"], n=r["n_candidates"], threshold=cfg["confidence_threshold"])
-    cells = r["cells"]
-    result_image = batch.save(r["annotated_img"], "segmentation",
-                              batch.t("cap_segmentation", name=batch.stem, n=len(cells)))
-    batch.save(r["all_circles_img"], "all_nuclei", batch.t("cap_all_nuclei", name=batch.stem, n=r["n_candidates"]))
-    for cell, crop in zip(cells, r["cell_gallery"]):
-        crop_image = batch.save(crop, f"cell_{cell['cell_id']}",
-                                batch.t("cap_cell", name=batch.stem, id=cell["cell_id"]), gallery=batch.crops)
-        batch.details.append({"filename": batch.filename, "result_image": result_image, **cell,
-                              "crop_image": crop_image})
-    batch.summary.append({"filename": batch.filename, "n_candidates": r["n_candidates"], **summarize_cells(cells)})
-
-
 TABS = [
-    {"label": "tab_count", "button": "btn_count", "sections": ["liver"], "process": process_count,
-     "prefix": "counting", "columns": 2, "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
-    {"label": "tab_boundary", "button": "btn_boundary", "sections": ["liver1"], "process": process_boundary,
-     "prefix": "boundary", "columns": 2, "outputs": ["warnings", "gallery", "zip"]},
-    {"label": "tab_cell", "button": "btn_cell", "sections": ["cell"], "process": process_cell,
-     "prefix": "cell_ratio", "columns": 2,
+    {"label": "tab_count", "button": "btn_count", "analyses": ["count"], "prefix": "counting", "columns": 2,
+     "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
+    {"label": "tab_boundary", "button": "btn_boundary", "analyses": ["boundary"], "prefix": "boundary", "columns": 2,
+     "outputs": ["warnings", "gallery", "zip"]},
+    {"label": "tab_cell", "button": "btn_cell", "analyses": ["cell"], "prefix": "cell_ratio", "columns": 2,
      "outputs": ["warnings", "gallery", "crops", "summary", "details", "csv", "zip"]},
-    {"label": "tab_combined", "button": "btn_combined", "sections": ["liver1", "liver"], "process": process_combined,
-     "prefix": "combined", "columns": 3, "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
+    {"label": "tab_combined", "button": "btn_combined", "analyses": ["boundary", "count"], "prefix": "combined",
+     "columns": 3, "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
 ]
 
 
 def make_handler(tab):
-    def run(lang, files, *values, progress=gr.Progress()):
-        batch = Batch(lang)
-        if files:
-            values = iter(values)
-            cfgs = {section: parse_settings(section, values) for section in tab["sections"]}
-            for f in progress.tqdm(files, desc=batch.t("progress")):
-                batch.begin(f)
-                img = read_uploaded_image(f)
-                if img is None:
-                    batch.warn("warn_read_failed")
-                    continue
-                tab["process"](batch, img, cfgs)
+    def run(lang, profile, files, *values, progress=gr.Progress()):
+        # Settings inputs cover every profile (see build_tab); keep only the selected profile's
+        values = iter(values)
+        cfgs = {name: {a: parse_settings(p.ANALYSES[a].settings, profile_config(name, a), values)
+                       for a in tab["analyses"]}
+                for name, p in PROFILES.items()}[profile]
+        batch = Batch(lang, profile, cfgs)
+        analyses = PROFILES[profile].ANALYSES
+        for f in progress.tqdm(files or [], desc=batch.t("progress")):
+            batch.begin(f)
+            img = read_uploaded_image(f)
+            if img is None:
+                batch.warn("warn_read_failed")
+                continue
+            try:
+                for a in tab["analyses"]:
+                    batch.add(analyses[a].run(img, cfgs[a]))
+            except ModelUnavailable as e:
+                log.exception("Model unavailable")
+                batch.warn(e.args[0])
+            except Exception:
+                log.exception("Analysis failed for %s", f)
+                batch.warn("warn_unexpected_error")
+            batch.end()
         out = batch.outputs(tab["prefix"])
         return [out[k] for k in tab["outputs"]]
     return run
@@ -248,28 +208,30 @@ class Translatable:
 
     def __init__(self, lang):
         self.lang = lang
-        self.entries = []
+        self.entries = []  # (component, lang -> update kwargs)
 
     def __call__(self, cls, key, prop="label", fmt=None, **kwargs):
         fmt = fmt or {}
-        component = cls(**{prop: t(key, self.lang, **fmt)}, **kwargs)
-        self.entries.append((component, prop, key, fmt))
+        return self.add(cls, lambda lang: {prop: t(key, lang, **fmt)}, **kwargs)
+
+    def add(self, cls, text, **kwargs):
+        component = cls(**text(self.lang), **kwargs)
+        self.entries.append((component, text))
         return component
 
     @property
     def components(self):
-        return [c for c, *_ in self.entries]
+        return [c for c, _ in self.entries]
 
     def relabel(self, lang):
-        return [gr.update(**{prop: t(key, lang, **fmt)}) for _, prop, key, fmt in self.entries]
+        return [gr.update(**text(lang)) for _, text in self.entries]
 
 
-def build_settings(tr, section):
-    """Advanced-settings inputs for one config section, in the order parse_settings reads them."""
-    defaults = CONFIG[section]
+def build_settings(tr, spec, defaults):
+    """Advanced-settings inputs for one analysis, in the order parse_settings reads them."""
     inputs, scalars = [], []
-    for key, label, rng in SETTINGS[section]:
-        if rng == HSV:
+    for key, label, kind in spec:
+        if kind == HSV:
             tr(gr.Markdown, label, prop="value")
             for bound in ("lower", "upper"):
                 with gr.Row():
@@ -277,17 +239,20 @@ def build_settings(tr, section):
                         inputs.append(tr(gr.Slider, f"hsv_{bound}", fmt={"ch": ch},
                                          minimum=0, maximum=mx, value=min(v, mx), step=1))
         else:
-            scalars.append((key, label, rng))
+            scalars.append((key, label, kind))
     with gr.Row():
-        for key, label, rng in scalars:
-            if rng is None:
+        for key, label, kind in scalars:
+            if kind is None:
                 inputs.append(tr(gr.Number, label, value=defaults[key]))
+            elif kind == BOOL:
+                inputs.append(tr(gr.Checkbox, label, value=defaults[key]))
             else:
-                inputs.append(tr(gr.Slider, label, minimum=rng[0], maximum=rng[1], step=rng[2], value=defaults[key]))
+                inputs.append(tr(gr.Slider, label, minimum=kind[0], maximum=kind[1], step=kind[2], value=defaults[key]))
     return inputs
 
 
-def build_tab(tr, lang, tab):
+def build_tab(tr, lang, profile, tab):
+    """Returns this tab's settings panels: {profile name: column shown only for that profile}."""
     with tr(gr.Tab, tab["label"]):
         with gr.Row():
             with gr.Column(scale=4):
@@ -296,12 +261,14 @@ def build_tab(tr, lang, tab):
             button = tr(gr.Button, tab["button"], prop="value", variant="primary", scale=0)
         files.change(preview_uploads, inputs=[files], outputs=[preview])
 
+        panels, settings = {}, []
         with tr(gr.Accordion, "advanced", open=False):
-            settings = []
-            for section in tab["sections"]:
-                if len(tab["sections"]) > 1:
-                    tr(gr.Markdown, f"section_{section}", prop="value")
-                settings += build_settings(tr, section)
+            for name, p in PROFILES.items():
+                with gr.Column(visible=name == DEFAULT_PROFILE) as panels[name]:
+                    for a in tab["analyses"]:
+                        if len(tab["analyses"]) > 1:
+                            tr(gr.Markdown, f"section_{a}", prop="value")
+                        settings += build_settings(tr, p.ANALYSES[a].settings, profile_config(name, a))
 
         outputs = {
             "warnings": gr.Markdown(""),
@@ -317,23 +284,37 @@ def build_tab(tr, lang, tab):
                 outputs["csv"] = tr(gr.File, "csv", file_count="multiple")
             outputs["zip"] = tr(gr.File, "zip")
 
-        button.click(make_handler(tab), inputs=[lang, files] + settings,
+        button.click(make_handler(tab), inputs=[lang, profile, files] + settings,
                      outputs=[outputs[k] for k in tab["outputs"]])
+    return panels
 
 
 def build_app():
     default_lang = APP_CFG["default_language"]
     tr = Translatable(default_lang)
+    profile_choices = lambda lang: [(t(f"profile_{name}", lang), name) for name in PROFILES]
+    describe = lambda lang, profile: t(f"profile_desc_{profile}", lang)
+
     with gr.Blocks(title="Zebrafish Liver Analysis Tool", delete_cache=(RETENTION_S, RETENTION_S)) as app:
         with gr.Row(equal_height=True):
-            with gr.Column(scale=1, min_width=320):  # wraps the language toggle below the title on phones
+            with gr.Column(scale=1, min_width=320):  # wraps the selectors below the title on phones
                 tr(gr.Markdown, "title", prop="value")
+            profile = tr.add(gr.Dropdown, lambda lang: {"label": t("profile", lang), "choices": profile_choices(lang)},
+                             value=DEFAULT_PROFILE, scale=0, min_width=260)
             lang = gr.Radio(LANGUAGES, value=default_lang, show_label=False, container=False, scale=0, min_width=200)
-        for tab in TABS:
-            build_tab(tr, lang, tab)
+        description = gr.Markdown(describe(default_lang, DEFAULT_PROFILE))
+
+        panels = [build_tab(tr, lang, profile, tab) for tab in TABS]
+        panel_list = [panel for tab_panels in panels for panel in tab_panels.values()]
+
         lang.change(tr.relabel, inputs=[lang], outputs=tr.components)
+        lang.change(describe, inputs=[lang, profile], outputs=[description])
+        profile.change(describe, inputs=[lang, profile], outputs=[description])
+        profile.change(lambda selected: [gr.update(visible=name == selected) for p in panels for name in p],
+                       inputs=[profile], outputs=panel_list)
     return app
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     build_app().launch(server_name=APP_CFG["server_name"], server_port=APP_CFG["server_port"])

@@ -2,7 +2,26 @@
 
 All changes relative to the [original repository](https://github.com/dhcl8881/nhri) by dhcl8881.
 
-## [Unreleased] - 2026-10-22
+## [Unreleased] - 2026-10-22 (profiles)
+
+### Added
+
+- **Analysis profiles** (`profiles/`): a selector at the top of the page picks a complete set of algorithms and models. Settings per profile live under `profiles:` in `config.yaml`. Every CSV row records the profile, and the `.zip` includes `*_settings.json` with the exact settings used.
+  - `dhcl8881` (default): the original author's code (`liver/`, `liver1/`, `cell/`), unchanged. Verified to reproduce the original's counts and every per-cell measurement on all sample images.
+  - `cpsam-v1`: the first improved profile (`profiles/cpsam_v1/`):
+    - **N/C ratio** by Cellpose-SAM (`cpsam_v2`) cell and nucleus segmentation; N/C = nucleus ÷ (cell − nucleus). Quality filters, all adjustable: exclude cells cut off by the image edge, out-of-focus cells, cells without exactly one nucleus, and outlines drawn around the nucleus only. The summary adds the median N/C.
+    - **Counting**: scale-bar exclusion compares x with the width and y with the height; red uses both hue ranges (0–10, 170–179); green is limited to hues 40–90. Possibly merged cells (≥ 3× the image's median area) are outlined in orange and flagged in the CSV; they are not split.
+    - **Boundary**: each green region is outlined separately (no lines across the image).
+- `cellpose==4.2.1.1` and `scipy` dependencies.
+
+### Changed
+
+- `opencv-python` → `opencv-python-headless` (required by cellpose; both install `cv2`, so they cannot coexist).
+- Models load on first use instead of at startup. If the dhcl8881 weights or the Cellpose model are missing, the app still starts and shows a message on the affected analysis.
+- `app.py` handles all profiles through one result format (`profiles/base.py`), so adding a profile needs no app changes.
+- Shared contour labelling helpers moved from `liver/main.py` to `annotate.py`.
+
+## 2026-10-22 (cell IDs, 中/英)
 
 ### Added
 
