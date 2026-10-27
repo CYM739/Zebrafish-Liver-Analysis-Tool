@@ -2,7 +2,39 @@
 
 All changes relative to the [original repository](https://github.com/dhcl8881/nhri) by dhcl8881.
 
-## [Unreleased] - 2026-04-14
+## [Unreleased] - 2026-10-22
+
+### Added
+
+- **Every detection is numbered and traceable to the CSV.** Result images now carry an ID next to each detected cell (`M1…` macrophages, `N1…` neutrophils, `1…` hepatocytes), and each tab writes two CSVs:
+  - `*_summary.csv`: one row per image (counts, or the N/C-ratio means)
+  - `*_cells.csv`: one row per detected cell with `cell_id`, `x`, `y`, `result_image` (the highlighted image it appears on), and, for the N/C ratio, `classifier_score` and `crop_image`
+- **中文 / English toggle** for the whole UI (`i18n.py`); the default language is set in `config.yaml` → `app.default_language`
+- `annotate.py`: a shared ID-label drawing helper; label colour and size are set in `config.yaml` → `annotation`
+- `config.yaml` → `app`: server address/port, default language, and result retention time
+
+### Changed
+
+- **`app.py`** rewritten around a single tab builder and a shared run loop. The four tabs are declared in `TABS`/`SETTINGS` instead of ~300 lines of copy-pasted sliders and handlers. The combined tab reuses the boundary and counting steps.
+- The N/C ratio CSV no longer mixes an unlabelled average row in with the cells; averages moved to `*_summary.csv`. The CLI writes `test_summary.csv` alongside `test.csv`.
+- `cell/main.py`: classification and segmentation now happen in one pass; the U-Net previously ran twice per accepted cell. Results are identical, verified against the previous code on all sample images.
+- Analysis modules return warning keys instead of English sentences, so the UI can translate them. Warnings are reworded for end users.
+- The HSV hue slider max is 179 (the OpenCV 8-bit hue range; equivalent to the old 255). The "Nucleus roundness" (`hough_param2`) slider max is 1.0, because OpenCV's `HOUGH_GRADIENT_ALT` finds nothing above 1.
+- Gallery captions put the result type / cell number first, so they stay readable when truncated on phones.
+- CSV files are written as UTF-8 with BOM, so Excel shows non-ASCII file names correctly.
+- CLIs run from the repository root (`python -m liver.main ...`). The `liver` CLI always writes to `liver/result/`.
+
+### Fixed
+
+- Concurrent users overwrote each other's result files and CSVs, because every request wrote to the same fixed file names. Each run now gets its own folder, and old folders are removed after `result_retention_minutes`.
+- Temporary results and uploads grew without limit; both are now cleaned up after the retention period.
+- Startup downloaded ImageNet ResNet18 weights that were immediately overwritten by `save1.pt`, which broke startup on offline machines. `Net(pretrained=False)` is now used for inference.
+- On a CUDA machine, the full-image segmentation overlay mixed CPU and GPU tensors; masks are now moved to CPU before drawing.
+- `liver1`: removed unused point-sorting code that raised `IndexError` on some inputs, and an unused `boundary_contours` output.
+- An even blur kernel value no longer crashes `cv2.GaussianBlur`.
+- Removed tracked `__pycache__` files and the unused root `main.py`.
+
+## 2026-04-14
 
 ### Added
 

@@ -31,3 +31,13 @@ cell:
   lab_upper: [190, 255, 255]
   blur_kernel: 5
   median_blur_kernel: 7
+
+app:
+  server_name: 0.0.0.0        # reachable from other computers on the LAN
+  server_port: 7860
+  default_language: zh        # zh | en
+  result_retention_minutes: 120
+
+annotation:
+  label_color: [0, 255, 255]  # BGR (yellow)
+  font_scale_per_1000px: 0.7

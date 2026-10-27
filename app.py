@@ -1,544 +1,339 @@
-import gradio as gr
-import cv2
-import numpy as np
-import pandas as pd
+import shutil
 import tempfile
-import os
+import time
 import zipfile
 from pathlib import Path
+
+import cv2
+import gradio as gr
+import numpy as np
+import pandas as pd
 from PIL import Image
+
 from config import get_config, merge_overrides
+from i18n import LANGUAGES, localize_columns, t
 from liver.main import count_cells
 from liver1.main import detect_boundary
-from cell.main import load_models, analyze_cells
+from cell.main import load_models, analyze_cells, summarize_cells
 
-# Load config once
 CONFIG = get_config()
+APP_CFG = CONFIG["app"]
+RETENTION_S = APP_CFG["result_retention_minutes"] * 60
+IMAGE_TYPES = [".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"]
 
 # Load cell models once at startup
 print("Loading cell analysis models...")
-CELL_MODELS = load_models(CONFIG.get("cell", {}))
+CELL_MODELS = load_models(CONFIG["cell"])
 print("Models loaded.")
 
-_TMPDIR = tempfile.mkdtemp(prefix="nhri_")
+_TMPDIR = Path(tempfile.mkdtemp(prefix="nhri_"))
+
+# Tunable settings shown under "Advanced Settings"; defaults come from config.yaml.
+# Entry: (config key, i18n key, (min, max, step) | HSV | None). HSV is a <key>_lower/<key>_upper
+# pair of [H, S, V] lists; None is a free number input.
+HSV = "hsv"
+HSV_MAX = (179, 255, 255)  # 8-bit OpenCV hue only spans 0-179
+SETTINGS = {
+    "liver": [
+        ("hsv_green", "hsv_neutrophil", HSV),
+        ("hsv_red1", "hsv_macrophage", HSV),
+        ("contour_area_min", "contour_area_min", (10, 2000, 10)),
+        ("blur_kernel", "blur_kernel", (1, 31, 2)),
+        ("mask_threshold", "mask_threshold", (200, 255, 1)),
+    ],
+    "liver1": [
+        ("hsv_green", "hsv_liver", HSV),
+        ("contour_area_min", "contour_area_min", (1, 500, 1)),
+    ],
+    "cell": [
+        ("confidence_threshold", "confidence_threshold", (0.1, 1.0, 0.05)),
+        ("segmentation_threshold", "segmentation_threshold", (0.1, 1.0, 0.05)),
+        ("um_conversion", "um_conversion", None),
+        ("hough_param1", "hough_param1", (10, 300, 1)),
+        ("hough_param2", "hough_param2", (0.1, 1.0, 0.05)),
+        ("hough_min_radius", "hough_min_radius", (1, 30, 1)),
+        ("hough_max_radius", "hough_max_radius", (10, 200, 1)),
+    ],
+}
+
+
+def new_run_dir():
+    """Private output folder per request, so concurrent users never overwrite each other.
+    Folders older than the retention period are removed."""
+    now = time.time()
+    for d in _TMPDIR.iterdir():
+        if now - d.stat().st_mtime > RETENTION_S:
+            shutil.rmtree(d, ignore_errors=True)
+    return Path(tempfile.mkdtemp(dir=_TMPDIR))
 
 
 def read_uploaded_image(filepath):
     """Read an image from a Gradio upload path, handling Unicode."""
-    data = np.fromfile(filepath, dtype=np.uint8)
-    img = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    return img
+    return cv2.imdecode(np.fromfile(filepath, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
-def save_result_image(img_bgr, name):
-    """Save a BGR image to temp dir, return the path."""
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    pil = Image.fromarray(img_rgb)
-    path = os.path.join(_TMPDIR, f"{name}.png")
-    pil.save(path)
-    return path
-
-
-def make_zip(file_paths, csv_path, zip_name):
-    """Bundle result images and CSV into a zip file."""
-    zip_path = os.path.join(_TMPDIR, zip_name)
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for p in file_paths:
-            zf.write(p, os.path.basename(p))
-        if csv_path and os.path.exists(csv_path):
-            zf.write(csv_path, os.path.basename(csv_path))
-    return zip_path
-
-
-def format_warnings(warnings):
-    """Format warning list into markdown."""
-    msgs = [w for w in warnings if w]
-    if not msgs:
-        return ""
-    lines = "\n".join(f"- {m}" for m in msgs)
-    return f"### ⚠ Warnings\n{lines}"
+def save_image(img, path):
+    """Save a BGR array or PIL image as PNG."""
+    if not isinstance(img, Image.Image):
+        img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    img.save(path)
+    return str(path)
 
 
 def preview_uploads(files):
     """Convert uploaded files (including .tif) to previewable images."""
     if not files:
         return []
+    run_dir = new_run_dir()
     previews = []
-    for f in files:
+    for i, f in enumerate(files):
         img = read_uploaded_image(f)
         if img is not None:
-            path = save_result_image(img, f"preview_{Path(f).stem}")
-            previews.append((path, Path(f).name))
+            previews.append((save_image(img, run_dir / f"preview_{i}.png"), Path(f).name))
     return previews
 
 
-# ---------------------------------------------------------------------------
-# Tab 1: Neutrophil / Macrophage Counting
-# ---------------------------------------------------------------------------
-def run_counting(files,
-                 green_h_low, green_s_low, green_v_low,
-                 green_h_up, green_s_up, green_v_up,
-                 red1_h_low, red1_s_low, red1_v_low,
-                 red1_h_up, red1_s_up, red1_v_up,
-                 contour_area_min, blur_kernel, mask_threshold,
-                 progress=gr.Progress()):
-    if not files:
-        return [], pd.DataFrame(), None, None, ""
-
-    overrides = {
-        "hsv_green_lower": [int(green_h_low), int(green_s_low), int(green_v_low)],
-        "hsv_green_upper": [int(green_h_up), int(green_s_up), int(green_v_up)],
-        "hsv_red1_lower": [int(red1_h_low), int(red1_s_low), int(red1_v_low)],
-        "hsv_red1_upper": [int(red1_h_up), int(red1_s_up), int(red1_v_up)],
-        "contour_area_min": int(contour_area_min),
-        "blur_kernel": int(blur_kernel) | 1,
-        "mask_threshold": int(mask_threshold),
-    }
-    cfg = merge_overrides("liver", overrides)
-
-    gallery = []
-    rows = []
-    warnings = []
-    result_files = []
-
-    for i, f in enumerate(progress.tqdm(files, desc="Counting cells")):
-        fname = Path(f).stem
-        progress(i / len(files), desc=f"Processing {Path(f).name} — detecting liver region...")
-        img = read_uploaded_image(f)
-        if img is None:
-            warnings.append(f"**{Path(f).name}**: Failed to read image file.")
-            continue
-
-        progress(i / len(files), desc=f"Processing {Path(f).name} — counting neutrophils & macrophages...")
-        result = count_cells(img, cfg)
-
-        if result.get("warning"):
-            warnings.append(f"**{Path(f).name}**: {result['warning']}")
-
-        red_path = save_result_image(result["red_img"], f"{fname}_macrophages_{i}")
-        green_path = save_result_image(result["green_img"], f"{fname}_neutrophils_{i}")
-        gallery.append((red_path, f"{fname} - Macrophages ({result['mac_count']})"))
-        gallery.append((green_path, f"{fname} - Neutrophils ({result['neu_count']})"))
-        result_files.extend([red_path, green_path])
-        rows.append({
-            "filename": Path(f).name,
-            "macrophage_count": result["mac_count"],
-            "neutrophil_count": result["neu_count"],
-        })
-
-    df = pd.DataFrame(rows)
-    csv_path = None
-    if not df.empty:
-        csv_path = os.path.join(_TMPDIR, "counting_results.csv")
-        df.to_csv(csv_path, index=False)
-
-    zip_path = make_zip(result_files, csv_path, "counting_results.zip") if result_files else None
-
-    return gallery, df, csv_path, zip_path, format_warnings(warnings)
+def parse_settings(section, values):
+    """Inverse of build_settings: consume UI values from an iterator into a config dict."""
+    defaults = CONFIG[section]
+    overrides = {}
+    for key, _, rng in SETTINGS[section]:
+        if rng == HSV:
+            for bound in ("lower", "upper"):
+                overrides[f"{key}_{bound}"] = [int(next(values)) for _ in range(3)]
+        else:
+            value = next(values)  # None (cleared number box) falls back to the config default
+            overrides[key] = None if value is None else type(defaults[key])(value)
+    return merge_overrides(section, overrides)
 
 
-# ---------------------------------------------------------------------------
-# Tab 2: Liver Boundary Detection
-# ---------------------------------------------------------------------------
-def run_boundary(files,
-                 green_h_low, green_s_low, green_v_low,
-                 green_h_up, green_s_up, green_v_up,
-                 contour_area_min,
-                 progress=gr.Progress()):
-    if not files:
-        return [], None, ""
+class Batch:
+    """Collects the outputs of one analysis run."""
 
-    overrides = {
-        "hsv_green_lower": [int(green_h_low), int(green_s_low), int(green_v_low)],
-        "hsv_green_upper": [int(green_h_up), int(green_s_up), int(green_v_up)],
-        "contour_area_min": int(contour_area_min),
-    }
-    cfg = merge_overrides("liver1", overrides)
+    def __init__(self, lang):
+        self.lang = lang
+        self.dir = new_run_dir()
+        self.gallery, self.crops, self.summary, self.details, self.warnings = [], [], [], [], []
+        self._stems = set()
 
-    gallery = []
-    warnings = []
-    result_files = []
+    def t(self, key, **kwargs):
+        return t(key, self.lang, **kwargs)
 
-    for i, f in enumerate(progress.tqdm(files, desc="Detecting boundaries")):
-        fname = Path(f).stem
-        progress(i / len(files), desc=f"Processing {Path(f).name} — detecting liver boundary...")
-        img = read_uploaded_image(f)
-        if img is None:
-            warnings.append(f"**{Path(f).name}**: Failed to read image file.")
-            continue
+    def begin(self, src):
+        """Start a new input file; result file names are derived from its (de-duplicated) stem."""
+        self.filename = Path(src).name
+        stem = Path(src).stem
+        self.stem = f"{stem}_{len(self._stems)}" if stem in self._stems else stem
+        self._stems.add(self.stem)
 
-        result = detect_boundary(img, cfg)
+    def save(self, img, suffix, caption, gallery=None):
+        """Save a result image, show it in a gallery and return its file name for the CSV."""
+        path = save_image(img, self.dir / f"{self.stem}_{suffix}.png")
+        (self.gallery if gallery is None else gallery).append((path, caption))
+        return Path(path).name
 
-        if result.get("warning"):
-            warnings.append(f"**{Path(f).name}**: {result['warning']}")
+    def warn(self, key, **kwargs):
+        if key:
+            self.warnings.append(f"**{self.filename}**: {self.t(key, **kwargs)}")
 
-        path = save_result_image(result["output_img"], f"{fname}_boundary_{i}")
-        gallery.append((path, fname))
-        result_files.append(path)
-
-    zip_path = make_zip(result_files, None, "boundary_results.zip") if result_files else None
-
-    return gallery, zip_path, format_warnings(warnings)
+    def outputs(self, prefix):
+        """Write CSVs and the zip; return everything a tab can display."""
+        tables = {"summary": pd.DataFrame(self.summary).round(4),
+                  "cells": pd.DataFrame(self.details).round(4)}
+        csvs = []
+        for name, df in tables.items():
+            if not df.empty:
+                path = self.dir / f"{prefix}_{name}.csv"
+                df.to_csv(path, index=False, encoding="utf-8-sig")  # BOM so Excel reads non-ASCII names
+                csvs.append(str(path))
+        files = [p for p, _ in self.gallery + self.crops] + csvs
+        zip_path = None
+        if files:
+            zip_path = str(self.dir / f"{prefix}_results.zip")
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for p in files:
+                    zf.write(p, Path(p).name)
+        return {
+            "warnings": "\n".join([self.t("warnings")] + [f"- {w}" for w in self.warnings]) if self.warnings else "",
+            "gallery": self.gallery,
+            "crops": self.crops,
+            "summary": localize_columns(tables["summary"], self.lang),
+            "details": localize_columns(tables["cells"], self.lang),
+            "csv": csvs or None,
+            "zip": zip_path,
+        }
 
 
 # ---------------------------------------------------------------------------
-# Tab 3: Cell N/C Ratio
+# Per-image analyses
 # ---------------------------------------------------------------------------
-def run_cell_ratio(files,
-                   confidence, seg_threshold, um_conversion,
-                   hough_param1, hough_param2,
-                   hough_min_radius, hough_max_radius,
-                   progress=gr.Progress()):
-    if not files:
-        return [], [], pd.DataFrame(), None, None, ""
-
-    overrides = {
-        "confidence_threshold": float(confidence),
-        "segmentation_threshold": float(seg_threshold),
-        "um_conversion": float(um_conversion),
-        "hough_param1": int(hough_param1),
-        "hough_param2": float(hough_param2),
-        "hough_min_radius": int(hough_min_radius),
-        "hough_max_radius": int(hough_max_radius),
-    }
-    cfg = merge_overrides("cell", overrides)
-
-    annotated_gallery = []
-    cell_gallery = []
-    all_dfs = []
-    warnings = []
-    result_files = []
-
-    for i, f in enumerate(progress.tqdm(files, desc="Analyzing cells")):
-        fname = Path(f).stem
-        progress(i / len(files), desc=f"Processing {Path(f).name} — detecting circles...")
-        img = read_uploaded_image(f)
-        if img is None:
-            warnings.append(f"**{Path(f).name}**: Failed to read image file.")
-            continue
-
-        progress(i / len(files), desc=f"Processing {Path(f).name} — running model inference...")
-        result = analyze_cells(img, CELL_MODELS, cfg)
-
-        if result.get("warning"):
-            warnings.append(f"**{Path(f).name}**: {result['warning']}")
-
-        seg_path = save_result_image(result["annotated_img"], f"{fname}_seg_{i}")
-        circ_path = save_result_image(result["all_circles_img"], f"{fname}_circles_{i}")
-        annotated_gallery.append((seg_path, f"{fname} - Segmentation"))
-        annotated_gallery.append((circ_path, f"{fname} - Detected Circles"))
-        result_files.extend([seg_path, circ_path])
-
-        for j, cell_img in enumerate(result["cell_gallery"]):
-            cell_path = os.path.join(_TMPDIR, f"{fname}_cell_{i}_{j}.png")
-            cell_img.save(cell_path)
-            cell_gallery.append((cell_path, f"Cell {j}"))
-            result_files.append(cell_path)
-
-        if not result["dataframe"].empty:
-            df_copy = result["dataframe"].copy()
-            df_copy.insert(0, "filename", Path(f).name)
-            all_dfs.append(df_copy)
-
-    df = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame()
-    csv_path = None
-    if not df.empty:
-        csv_path = os.path.join(_TMPDIR, "cell_ratio_results.csv")
-        df.to_csv(csv_path, index=False)
-
-    zip_path = make_zip(result_files, csv_path, "cell_ratio_results.zip") if result_files else None
-
-    return annotated_gallery, cell_gallery, df, csv_path, zip_path, format_warnings(warnings)
+def process_count(batch, img, cfgs):
+    r = count_cells(img, cfgs["liver"])
+    batch.warn(r["warning"])
+    for cell_type, image_key, cells_key, caption in (
+            ("macrophage", "red_img", "macrophages", "cap_macrophages"),
+            ("neutrophil", "green_img", "neutrophils", "cap_neutrophils")):
+        cells = r[cells_key]
+        result_image = batch.save(r[image_key], cells_key, batch.t(caption, name=batch.stem, n=len(cells)))
+        batch.details += [{"filename": batch.filename, "result_image": result_image, "cell_type": cell_type, **c}
+                          for c in cells]
+    batch.summary.append({"filename": batch.filename,
+                          "macrophage_count": len(r["macrophages"]),
+                          "neutrophil_count": len(r["neutrophils"])})
 
 
-# ---------------------------------------------------------------------------
-# Tab 4: Combined (Boundary + Counting)
-# ---------------------------------------------------------------------------
-def run_combined(files,
-                 b_green_h_low, b_green_s_low, b_green_v_low,
-                 b_green_h_up, b_green_s_up, b_green_v_up,
-                 b_contour_area_min,
-                 c_green_h_low, c_green_s_low, c_green_v_low,
-                 c_green_h_up, c_green_s_up, c_green_v_up,
-                 c_red1_h_low, c_red1_s_low, c_red1_v_low,
-                 c_red1_h_up, c_red1_s_up, c_red1_v_up,
-                 c_contour_area_min, c_blur_kernel, c_mask_threshold,
-                 progress=gr.Progress()):
-    if not files:
-        return [], pd.DataFrame(), None, None, ""
+def process_boundary(batch, img, cfgs):
+    r = detect_boundary(img, cfgs["liver1"])
+    batch.warn(r["warning"])
+    batch.save(r["output_img"], "boundary", batch.t("cap_boundary", name=batch.stem))
 
-    boundary_cfg = merge_overrides("liver1", {
-        "hsv_green_lower": [int(b_green_h_low), int(b_green_s_low), int(b_green_v_low)],
-        "hsv_green_upper": [int(b_green_h_up), int(b_green_s_up), int(b_green_v_up)],
-        "contour_area_min": int(b_contour_area_min),
-    })
-    counting_cfg = merge_overrides("liver", {
-        "hsv_green_lower": [int(c_green_h_low), int(c_green_s_low), int(c_green_v_low)],
-        "hsv_green_upper": [int(c_green_h_up), int(c_green_s_up), int(c_green_v_up)],
-        "hsv_red1_lower": [int(c_red1_h_low), int(c_red1_s_low), int(c_red1_v_low)],
-        "hsv_red1_upper": [int(c_red1_h_up), int(c_red1_s_up), int(c_red1_v_up)],
-        "contour_area_min": int(c_contour_area_min),
-        "blur_kernel": int(c_blur_kernel) | 1,
-        "mask_threshold": int(c_mask_threshold),
-    })
 
-    gallery = []
-    rows = []
-    warnings = []
-    result_files = []
+def process_combined(batch, img, cfgs):
+    process_boundary(batch, img, cfgs)
+    process_count(batch, img, cfgs)
 
-    for i, f in enumerate(progress.tqdm(files, desc="Combined analysis")):
-        fname = Path(f).stem
-        img = read_uploaded_image(f)
-        if img is None:
-            warnings.append(f"**{Path(f).name}**: Failed to read image file.")
-            continue
 
-        progress(i / len(files), desc=f"Processing {Path(f).name} — detecting boundary...")
-        b_result = detect_boundary(img, boundary_cfg)
-        if b_result.get("warning"):
-            warnings.append(f"**{Path(f).name}** (boundary): {b_result['warning']}")
+def process_cell(batch, img, cfgs):
+    cfg = cfgs["cell"]
+    r = analyze_cells(img, CELL_MODELS, cfg)
+    batch.warn(r["warning"], n=r["n_candidates"], threshold=cfg["confidence_threshold"])
+    cells = r["cells"]
+    result_image = batch.save(r["annotated_img"], "segmentation",
+                              batch.t("cap_segmentation", name=batch.stem, n=len(cells)))
+    batch.save(r["all_circles_img"], "all_nuclei", batch.t("cap_all_nuclei", name=batch.stem, n=r["n_candidates"]))
+    for cell, crop in zip(cells, r["cell_gallery"]):
+        crop_image = batch.save(crop, f"cell_{cell['cell_id']}",
+                                batch.t("cap_cell", name=batch.stem, id=cell["cell_id"]), gallery=batch.crops)
+        batch.details.append({"filename": batch.filename, "result_image": result_image, **cell,
+                              "crop_image": crop_image})
+    batch.summary.append({"filename": batch.filename, "n_candidates": r["n_candidates"], **summarize_cells(cells)})
 
-        progress(i / len(files), desc=f"Processing {Path(f).name} — counting cells...")
-        c_result = count_cells(img, counting_cfg)
-        if c_result.get("warning"):
-            warnings.append(f"**{Path(f).name}** (counting): {c_result['warning']}")
 
-        bp = save_result_image(b_result["output_img"], f"{fname}_boundary_{i}")
-        rp = save_result_image(c_result["red_img"], f"{fname}_macrophages_{i}")
-        gp = save_result_image(c_result["green_img"], f"{fname}_neutrophils_{i}")
-        gallery.append((bp, f"{fname} - Boundary"))
-        gallery.append((rp, f"{fname} - Macrophages ({c_result['mac_count']})"))
-        gallery.append((gp, f"{fname} - Neutrophils ({c_result['neu_count']})"))
-        result_files.extend([bp, rp, gp])
-        rows.append({
-            "filename": Path(f).name,
-            "macrophage_count": c_result["mac_count"],
-            "neutrophil_count": c_result["neu_count"],
-        })
+TABS = [
+    {"label": "tab_count", "button": "btn_count", "sections": ["liver"], "process": process_count,
+     "prefix": "counting", "columns": 2, "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
+    {"label": "tab_boundary", "button": "btn_boundary", "sections": ["liver1"], "process": process_boundary,
+     "prefix": "boundary", "columns": 2, "outputs": ["warnings", "gallery", "zip"]},
+    {"label": "tab_cell", "button": "btn_cell", "sections": ["cell"], "process": process_cell,
+     "prefix": "cell_ratio", "columns": 2,
+     "outputs": ["warnings", "gallery", "crops", "summary", "details", "csv", "zip"]},
+    {"label": "tab_combined", "button": "btn_combined", "sections": ["liver1", "liver"], "process": process_combined,
+     "prefix": "combined", "columns": 3, "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
+]
 
-    df = pd.DataFrame(rows)
-    csv_path = None
-    if not df.empty:
-        csv_path = os.path.join(_TMPDIR, "combined_results.csv")
-        df.to_csv(csv_path, index=False)
 
-    zip_path = make_zip(result_files, csv_path, "combined_results.zip") if result_files else None
-
-    return gallery, df, csv_path, zip_path, format_warnings(warnings)
+def make_handler(tab):
+    def run(lang, files, *values, progress=gr.Progress()):
+        batch = Batch(lang)
+        if files:
+            values = iter(values)
+            cfgs = {section: parse_settings(section, values) for section in tab["sections"]}
+            for f in progress.tqdm(files, desc=batch.t("progress")):
+                batch.begin(f)
+                img = read_uploaded_image(f)
+                if img is None:
+                    batch.warn("warn_read_failed")
+                    continue
+                tab["process"](batch, img, cfgs)
+        out = batch.outputs(tab["prefix"])
+        return [out[k] for k in tab["outputs"]]
+    return run
 
 
 # ---------------------------------------------------------------------------
 # Build UI
 # ---------------------------------------------------------------------------
+class Translatable:
+    """Creates components with text in the current language and remembers them for relabelling."""
+
+    def __init__(self, lang):
+        self.lang = lang
+        self.entries = []
+
+    def __call__(self, cls, key, prop="label", fmt=None, **kwargs):
+        fmt = fmt or {}
+        component = cls(**{prop: t(key, self.lang, **fmt)}, **kwargs)
+        self.entries.append((component, prop, key, fmt))
+        return component
+
+    @property
+    def components(self):
+        return [c for c, *_ in self.entries]
+
+    def relabel(self, lang):
+        return [gr.update(**{prop: t(key, lang, **fmt)}) for _, prop, key, fmt in self.entries]
+
+
+def build_settings(tr, section):
+    """Advanced-settings inputs for one config section, in the order parse_settings reads them."""
+    defaults = CONFIG[section]
+    inputs, scalars = [], []
+    for key, label, rng in SETTINGS[section]:
+        if rng == HSV:
+            tr(gr.Markdown, label, prop="value")
+            for bound in ("lower", "upper"):
+                with gr.Row():
+                    for ch, mx, v in zip("HSV", HSV_MAX, defaults[f"{key}_{bound}"]):
+                        inputs.append(tr(gr.Slider, f"hsv_{bound}", fmt={"ch": ch},
+                                         minimum=0, maximum=mx, value=min(v, mx), step=1))
+        else:
+            scalars.append((key, label, rng))
+    with gr.Row():
+        for key, label, rng in scalars:
+            if rng is None:
+                inputs.append(tr(gr.Number, label, value=defaults[key]))
+            else:
+                inputs.append(tr(gr.Slider, label, minimum=rng[0], maximum=rng[1], step=rng[2], value=defaults[key]))
+    return inputs
+
+
+def build_tab(tr, lang, tab):
+    with tr(gr.Tab, tab["label"]):
+        with gr.Row():
+            with gr.Column(scale=4):
+                files = tr(gr.File, "upload", file_count="multiple", file_types=IMAGE_TYPES)
+                preview = tr(gr.Gallery, "preview", columns=4, height=150, interactive=False)
+            button = tr(gr.Button, tab["button"], prop="value", variant="primary", scale=0)
+        files.change(preview_uploads, inputs=[files], outputs=[preview])
+
+        with tr(gr.Accordion, "advanced", open=False):
+            settings = []
+            for section in tab["sections"]:
+                if len(tab["sections"]) > 1:
+                    tr(gr.Markdown, f"section_{section}", prop="value")
+                settings += build_settings(tr, section)
+
+        outputs = {
+            "warnings": gr.Markdown(""),
+            "gallery": tr(gr.Gallery, "results", columns=tab["columns"], interactive=False),
+        }
+        if "crops" in tab["outputs"]:
+            outputs["crops"] = tr(gr.Gallery, "crops", columns=6, interactive=False)
+        if "summary" in tab["outputs"]:
+            outputs["summary"] = tr(gr.Dataframe, "summary_table")
+            outputs["details"] = tr(gr.Dataframe, "details_table")
+        with gr.Row():
+            if "csv" in tab["outputs"]:
+                outputs["csv"] = tr(gr.File, "csv", file_count="multiple")
+            outputs["zip"] = tr(gr.File, "zip")
+
+        button.click(make_handler(tab), inputs=[lang, files] + settings,
+                     outputs=[outputs[k] for k in tab["outputs"]])
+
+
 def build_app():
-    lc = CONFIG["liver"]
-    l1c = CONFIG["liver1"]
-    cc = CONFIG["cell"]
-
-    with gr.Blocks(title="Zebrafish Liver Analysis Tool") as app:
-        gr.Markdown("# Zebrafish Liver Analysis Tool")
-
-        # ---- Tab 1: Counting ----
-        with gr.Tab("Neutrophil / Macrophage Count"):
-            with gr.Row():
-                with gr.Column(scale=4):
-                    count_files = gr.File(file_count="multiple", label="Upload Images",
-                                          file_types=[".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"])
-                    count_preview = gr.Gallery(label="Image Preview", columns=4, height=150,
-                                               interactive=False)
-                count_btn = gr.Button("Run Counting", variant="primary", scale=0)
-            count_files.change(preview_uploads, inputs=[count_files], outputs=[count_preview])
-
-            with gr.Accordion("Advanced Settings", open=False):
-                gr.Markdown("**Green (Neutrophil) HSV Range**")
-                with gr.Row():
-                    c_gh_l = gr.Slider(0, 255, value=lc["hsv_green_lower"][0], step=1, label="H Lower")
-                    c_gs_l = gr.Slider(0, 255, value=lc["hsv_green_lower"][1], step=1, label="S Lower")
-                    c_gv_l = gr.Slider(0, 255, value=lc["hsv_green_lower"][2], step=1, label="V Lower")
-                with gr.Row():
-                    c_gh_u = gr.Slider(0, 255, value=lc["hsv_green_upper"][0], step=1, label="H Upper")
-                    c_gs_u = gr.Slider(0, 255, value=lc["hsv_green_upper"][1], step=1, label="S Upper")
-                    c_gv_u = gr.Slider(0, 255, value=lc["hsv_green_upper"][2], step=1, label="V Upper")
-                gr.Markdown("**Red (Macrophage) HSV Range**")
-                with gr.Row():
-                    c_rh_l = gr.Slider(0, 255, value=lc["hsv_red1_lower"][0], step=1, label="H Lower")
-                    c_rs_l = gr.Slider(0, 255, value=lc["hsv_red1_lower"][1], step=1, label="S Lower")
-                    c_rv_l = gr.Slider(0, 255, value=lc["hsv_red1_lower"][2], step=1, label="V Lower")
-                with gr.Row():
-                    c_rh_u = gr.Slider(0, 255, value=lc["hsv_red1_upper"][0], step=1, label="H Upper")
-                    c_rs_u = gr.Slider(0, 255, value=lc["hsv_red1_upper"][1], step=1, label="S Upper")
-                    c_rv_u = gr.Slider(0, 255, value=lc["hsv_red1_upper"][2], step=1, label="V Upper")
-                with gr.Row():
-                    c_area = gr.Slider(10, 2000, value=lc["contour_area_min"], step=10, label="Min Contour Area")
-                    c_blur = gr.Slider(1, 31, value=lc["blur_kernel"], step=2, label="Blur Kernel")
-                    c_thresh = gr.Slider(200, 255, value=lc["mask_threshold"], step=1, label="Mask Threshold")
-
-            count_warnings = gr.Markdown("")
-            count_gallery = gr.Gallery(label="Results", columns=2, interactive=False)
-            count_table = gr.Dataframe(label="Cell Counts")
-            with gr.Row():
-                count_csv = gr.File(label="Download CSV")
-                count_zip = gr.File(label="Download All Results (.zip)")
-
-            count_btn.click(
-                run_counting,
-                inputs=[count_files,
-                        c_gh_l, c_gs_l, c_gv_l, c_gh_u, c_gs_u, c_gv_u,
-                        c_rh_l, c_rs_l, c_rv_l, c_rh_u, c_rs_u, c_rv_u,
-                        c_area, c_blur, c_thresh],
-                outputs=[count_gallery, count_table, count_csv, count_zip, count_warnings],
-            )
-
-        # ---- Tab 2: Boundary ----
-        with gr.Tab("Liver Boundary Detection"):
-            with gr.Row():
-                with gr.Column(scale=4):
-                    bound_files = gr.File(file_count="multiple", label="Upload Images",
-                                          file_types=[".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"])
-                    bound_preview = gr.Gallery(label="Image Preview", columns=4, height=150,
-                                               interactive=False)
-                bound_btn = gr.Button("Detect Boundary", variant="primary", scale=0)
-            bound_files.change(preview_uploads, inputs=[bound_files], outputs=[bound_preview])
-
-            with gr.Accordion("Advanced Settings", open=False):
-                gr.Markdown("**Green HSV Range**")
-                with gr.Row():
-                    b_gh_l = gr.Slider(0, 255, value=l1c["hsv_green_lower"][0], step=1, label="H Lower")
-                    b_gs_l = gr.Slider(0, 255, value=l1c["hsv_green_lower"][1], step=1, label="S Lower")
-                    b_gv_l = gr.Slider(0, 255, value=l1c["hsv_green_lower"][2], step=1, label="V Lower")
-                with gr.Row():
-                    b_gh_u = gr.Slider(0, 255, value=l1c["hsv_green_upper"][0], step=1, label="H Upper")
-                    b_gs_u = gr.Slider(0, 255, value=l1c["hsv_green_upper"][1], step=1, label="S Upper")
-                    b_gv_u = gr.Slider(0, 255, value=l1c["hsv_green_upper"][2], step=1, label="V Upper")
-                b_area = gr.Slider(1, 500, value=l1c["contour_area_min"], step=1, label="Min Contour Area")
-
-            bound_warnings = gr.Markdown("")
-            bound_gallery = gr.Gallery(label="Results", columns=2, interactive=False)
-            bound_zip = gr.File(label="Download All Results (.zip)")
-
-            bound_btn.click(
-                run_boundary,
-                inputs=[bound_files,
-                        b_gh_l, b_gs_l, b_gv_l, b_gh_u, b_gs_u, b_gv_u,
-                        b_area],
-                outputs=[bound_gallery, bound_zip, bound_warnings],
-            )
-
-        # ---- Tab 3: Cell Ratio ----
-        with gr.Tab("Cell N/C Ratio"):
-            with gr.Row():
-                with gr.Column(scale=4):
-                    cell_files = gr.File(file_count="multiple", label="Upload Images",
-                                         file_types=[".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"])
-                    cell_preview = gr.Gallery(label="Image Preview", columns=4, height=150,
-                                              interactive=False)
-                cell_btn = gr.Button("Analyze Cells", variant="primary", scale=0)
-            cell_files.change(preview_uploads, inputs=[cell_files], outputs=[cell_preview])
-
-            with gr.Accordion("Advanced Settings", open=False):
-                with gr.Row():
-                    cell_conf = gr.Slider(0.1, 1.0, value=cc["confidence_threshold"],
-                                          step=0.05, label="Confidence Threshold")
-                    cell_seg = gr.Slider(0.1, 1.0, value=cc["segmentation_threshold"],
-                                         step=0.05, label="Segmentation Threshold")
-                    cell_um = gr.Number(value=cc["um_conversion"], label="um/pixel")
-                with gr.Row():
-                    cell_hp1 = gr.Slider(10, 300, value=cc["hough_param1"],
-                                         step=1, label="Hough Param1")
-                    cell_hp2 = gr.Slider(0.1, 2.0, value=cc["hough_param2"],
-                                         step=0.1, label="Hough Param2")
-                with gr.Row():
-                    cell_rmin = gr.Slider(1, 30, value=cc["hough_min_radius"],
-                                          step=1, label="Min Radius")
-                    cell_rmax = gr.Slider(10, 200, value=cc["hough_max_radius"],
-                                          step=1, label="Max Radius")
-
-            cell_warnings = gr.Markdown("")
-            cell_ann_gallery = gr.Gallery(label="Annotated Results", columns=2, interactive=False)
-            cell_crop_gallery = gr.Gallery(label="Individual Cells", columns=6, interactive=False)
-            cell_table = gr.Dataframe(label="Cell Measurements")
-            with gr.Row():
-                cell_csv = gr.File(label="Download CSV")
-                cell_zip = gr.File(label="Download All Results (.zip)")
-
-            cell_btn.click(
-                run_cell_ratio,
-                inputs=[cell_files,
-                        cell_conf, cell_seg, cell_um,
-                        cell_hp1, cell_hp2, cell_rmin, cell_rmax],
-                outputs=[cell_ann_gallery, cell_crop_gallery, cell_table, cell_csv, cell_zip, cell_warnings],
-            )
-
-        # ---- Tab 4: Combined ----
-        with gr.Tab("Combined (Boundary + Counting)"):
-            with gr.Row():
-                with gr.Column(scale=4):
-                    combo_files = gr.File(file_count="multiple", label="Upload Images",
-                                          file_types=[".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp"])
-                    combo_preview = gr.Gallery(label="Image Preview", columns=4, height=150,
-                                               interactive=False)
-                combo_btn = gr.Button("Run Combined Analysis", variant="primary", scale=0)
-            combo_files.change(preview_uploads, inputs=[combo_files], outputs=[combo_preview])
-
-            with gr.Accordion("Advanced Settings", open=False):
-                gr.Markdown("### Boundary Detection Settings")
-                gr.Markdown("**Green HSV Range**")
-                with gr.Row():
-                    cb_gh_l = gr.Slider(0, 255, value=l1c["hsv_green_lower"][0], step=1, label="H Lower")
-                    cb_gs_l = gr.Slider(0, 255, value=l1c["hsv_green_lower"][1], step=1, label="S Lower")
-                    cb_gv_l = gr.Slider(0, 255, value=l1c["hsv_green_lower"][2], step=1, label="V Lower")
-                with gr.Row():
-                    cb_gh_u = gr.Slider(0, 255, value=l1c["hsv_green_upper"][0], step=1, label="H Upper")
-                    cb_gs_u = gr.Slider(0, 255, value=l1c["hsv_green_upper"][1], step=1, label="S Upper")
-                    cb_gv_u = gr.Slider(0, 255, value=l1c["hsv_green_upper"][2], step=1, label="V Upper")
-                cb_area = gr.Slider(1, 500, value=l1c["contour_area_min"], step=1, label="Min Contour Area")
-
-                gr.Markdown("### Cell Counting Settings")
-                gr.Markdown("**Green (Neutrophil) HSV Range**")
-                with gr.Row():
-                    cc_gh_l = gr.Slider(0, 255, value=lc["hsv_green_lower"][0], step=1, label="H Lower")
-                    cc_gs_l = gr.Slider(0, 255, value=lc["hsv_green_lower"][1], step=1, label="S Lower")
-                    cc_gv_l = gr.Slider(0, 255, value=lc["hsv_green_lower"][2], step=1, label="V Lower")
-                with gr.Row():
-                    cc_gh_u = gr.Slider(0, 255, value=lc["hsv_green_upper"][0], step=1, label="H Upper")
-                    cc_gs_u = gr.Slider(0, 255, value=lc["hsv_green_upper"][1], step=1, label="S Upper")
-                    cc_gv_u = gr.Slider(0, 255, value=lc["hsv_green_upper"][2], step=1, label="V Upper")
-                gr.Markdown("**Red (Macrophage) HSV Range**")
-                with gr.Row():
-                    cc_rh_l = gr.Slider(0, 255, value=lc["hsv_red1_lower"][0], step=1, label="H Lower")
-                    cc_rs_l = gr.Slider(0, 255, value=lc["hsv_red1_lower"][1], step=1, label="S Lower")
-                    cc_rv_l = gr.Slider(0, 255, value=lc["hsv_red1_lower"][2], step=1, label="V Lower")
-                with gr.Row():
-                    cc_rh_u = gr.Slider(0, 255, value=lc["hsv_red1_upper"][0], step=1, label="H Upper")
-                    cc_rs_u = gr.Slider(0, 255, value=lc["hsv_red1_upper"][1], step=1, label="S Upper")
-                    cc_rv_u = gr.Slider(0, 255, value=lc["hsv_red1_upper"][2], step=1, label="V Upper")
-                with gr.Row():
-                    cc_c_area = gr.Slider(10, 2000, value=lc["contour_area_min"], step=10, label="Min Contour Area")
-                    cc_c_blur = gr.Slider(1, 31, value=lc["blur_kernel"], step=2, label="Blur Kernel")
-                    cc_c_thresh = gr.Slider(200, 255, value=lc["mask_threshold"], step=1, label="Mask Threshold")
-
-            combo_warnings = gr.Markdown("")
-            combo_gallery = gr.Gallery(label="Results", columns=3, interactive=False)
-            combo_table = gr.Dataframe(label="Cell Counts")
-            with gr.Row():
-                combo_csv = gr.File(label="Download CSV")
-                combo_zip = gr.File(label="Download All Results (.zip)")
-
-            combo_btn.click(
-                run_combined,
-                inputs=[combo_files,
-                        cb_gh_l, cb_gs_l, cb_gv_l, cb_gh_u, cb_gs_u, cb_gv_u,
-                        cb_area,
-                        cc_gh_l, cc_gs_l, cc_gv_l, cc_gh_u, cc_gs_u, cc_gv_u,
-                        cc_rh_l, cc_rs_l, cc_rv_l, cc_rh_u, cc_rs_u, cc_rv_u,
-                        cc_c_area, cc_c_blur, cc_c_thresh],
-                outputs=[combo_gallery, combo_table, combo_csv, combo_zip, combo_warnings],
-            )
-
+    default_lang = APP_CFG["default_language"]
+    tr = Translatable(default_lang)
+    with gr.Blocks(title="Zebrafish Liver Analysis Tool", delete_cache=(RETENTION_S, RETENTION_S)) as app:
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1, min_width=320):  # wraps the language toggle below the title on phones
+                tr(gr.Markdown, "title", prop="value")
+            lang = gr.Radio(LANGUAGES, value=default_lang, show_label=False, container=False, scale=0, min_width=200)
+        for tab in TABS:
+            build_tab(tr, lang, tab)
+        lang.change(tr.relabel, inputs=[lang], outputs=tr.components)
     return app
 
 
 if __name__ == "__main__":
-    app = build_app()
-    app.launch(server_name="0.0.0.0", server_port=7860)
+    build_app().launch(server_name=APP_CFG["server_name"], server_port=APP_CFG["server_port"])

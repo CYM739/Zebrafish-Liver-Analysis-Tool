@@ -6,9 +6,10 @@ import torch
 
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, pretrained=True):
         super().__init__()
-        self.model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        # ImageNet weights only matter for training; inference loads save1.pt over them
+        self.model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None)
         #self.in_features = self.model.fc.in_features
         self.fc = nn.Linear(1000,1)
 

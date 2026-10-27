@@ -23,7 +23,7 @@ uv run python app.py
 ```
 Or double-click `start.bat` on Windows.
 
-Opens at http://localhost:7860
+Opens at http://localhost:7860. Server address, port, default UI language (中文 / English) and how long results are kept are set in the `app` section of `config.yaml`.
 
 ## Tabs
 
@@ -31,6 +31,21 @@ Opens at http://localhost:7860
 2. **Liver Boundary Detection** — detects liver outline from green fluorescence
 3. **Cell N/C Ratio** — nuclear-to-cytoplasmic area ratio using ResNet18 + U-Net
 4. **Combined** — boundary detection + cell counting in one pass
+
+## Output files
+
+Every detected cell is numbered on the result image, and the same number appears in the CSV:
+
+| Tab | `*_summary.csv` (one row per image) | `*_cells.csv` (one row per cell) |
+|---|---|---|
+| Count / Combined | `macrophage_count`, `neutrophil_count` | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` |
+| Cell N/C Ratio | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2`, `cytoplasmic_area_um2`, `nc_ratio`, `classifier_score`, `crop_image` |
+
+`x`, `y` are pixel coordinates in the original image. `result_image` / `crop_image` are file names inside the downloaded `.zip`.
+
+## Command line
+
+Run from the repository root, e.g. `uv run python -m liver.main --mix_dir liver/1/1_channel_mix.tif` (also `liver1.main`, `cell.main`).
 
 ---
 

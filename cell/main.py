@@ -5,18 +5,18 @@ from pathlib import Path
 from PIL import Image
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
 import torchvision.transforms as T
-from torchvision import transforms
-from torchvision.transforms import ToTensor
+from torchvision.utils import draw_segmentation_masks
 import pandas as pd
 import numpy as np
 
+from annotate import draw_labels
 from cell.utils import cut, mix_circle
 from cell.model import Net, Unet
 
 _MODULE_DIR = Path(__file__).parent
+_CROP_HALF = 112  # half of the 224 px model input (200 px crop + 12 px padding per side)
+_SUMMARY_FIELDS = ("radius_px", "nuclear_area_um2", "cytoplasmic_area_um2", "nc_ratio")
 
 
 def load_models(config=None, device=None):
@@ -38,7 +38,7 @@ def load_models(config=None, device=None):
     if not Path(segmenter_path).is_absolute():
         segmenter_path = _MODULE_DIR / segmenter_path
 
-    m = Net().to(device).eval()
+    m = Net(pretrained=False).to(device).eval()
     m1 = Unet().to(device).eval()
     m.load_state_dict(torch.load(str(classifier_path), map_location=device, weights_only=True))
     m1.load_state_dict(torch.load(str(segmenter_path), map_location=device, weights_only=True))
@@ -55,153 +55,112 @@ def analyze_cells(img, models, config=None):
         config: dict with cell config values
 
     Returns:
-        dict with annotated_img, all_circles_img, dataframe, cell_gallery
+        dict with annotated_img (segmentation overlay with cell IDs), all_circles_img,
+        cells (per-cell records), cell_gallery (PIL crops in the same order as cells),
+        n_candidates, warning (i18n key or None)
     """
     if config is None:
         config = {}
 
     value = config.get("padding", 100)
-    um = config.get("um_conversion", 0.181)
+    um2 = config.get("um_conversion", 0.181) ** 2
     confidence_thresh = config.get("confidence_threshold", 0.75)
     seg_thresh = config.get("segmentation_threshold", 0.9)
 
     m, m1, device = models
-    tranform = transforms.Compose([
-        transforms.Pad(12, fill=(0, 0, 0), padding_mode='constant'),
-        ToTensor()
+    transform = T.Compose([
+        T.Pad(12, fill=(0, 0, 0), padding_mode='constant'),
+        T.ToTensor()
     ])
 
     circles = mix_circle(img, config)
     if circles is None:
-        return {
-            "annotated_img": img.copy(),
-            "all_circles_img": img.copy(),
-            "dataframe": pd.DataFrame(),
-            "cell_gallery": [],
-            "warning": "No cells detected — HoughCircles found nothing. Check LAB range or image type.",
-        }
+        return {"annotated_img": img.copy(), "all_circles_img": img.copy(), "cells": [],
+                "cell_gallery": [], "n_candidates": 0, "warning": "warn_no_circles"}
 
-    # Padded copies for drawing
-    captured_frame1 = cv2.copyMakeBorder(img, value, value, value, value,
-                                         cv2.BORDER_CONSTANT, value=(0, 0, 0))
-    captured_frame2 = cv2.copyMakeBorder(img, value, value, value, value,
-                                         cv2.BORDER_CONSTANT, value=(0, 0, 0))
-    # Padded copy for cutting (won't be drawn on)
     img_padded = cv2.copyMakeBorder(img, value, value, value, value,
                                     cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    all_circles = img_padded.copy()
+    overlay = T.ToTensor()(Image.fromarray(cv2.cvtColor(img_padded, cv2.COLOR_BGR2RGB)))
+    padded_h, padded_w = img_padded.shape[:2]
 
-    new_circle = []
+    cells = []
     cell_gallery = []
-    idx = 0
-
     with torch.no_grad():
-        for i in range(len(circles)):
-            a = cut(img_padded.copy(), circles[i], config)
-            image = Image.fromarray(cv2.cvtColor(a, cv2.COLOR_BGR2RGB))
-            cv2.circle(captured_frame1, center=(circles[i, 0], circles[i, 1]),
-                       radius=circles[i, 2], color=(0, 255, 0), thickness=2)
-            image_t = tranform(image).to(device).unsqueeze(0)
-            output = m(image_t)
-            if output > confidence_thresh:
-                new_circle.append(circles[i])
-                output1 = m1(image_t)
-                x = torch.sigmoid(output1.squeeze(1))
-                res = x >= seg_thresh
-                y = torchvision.utils.draw_segmentation_masks(
-                    image_t.squeeze(0), res, 0.5, (0, 255, 0))
-                y_pil = T.ToPILImage()(y)
-                cell_gallery.append(y_pil)
-                idx += 1
+        for cx, cy, r in circles:
+            cv2.circle(all_circles, center=(cx, cy), radius=r, color=(0, 255, 0), thickness=2)
+            crop = cut(img_padded.copy(), (cx, cy, r), config)
+            image_t = transform(Image.fromarray(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))).to(device).unsqueeze(0)
+            score = m(image_t).item()
+            if score <= confidence_thresh:
+                continue
 
-    if not new_circle:
-        all_circles_img = captured_frame1[value:-value, value:-value]
-        return {
-            "annotated_img": img.copy(),
-            "all_circles_img": all_circles_img,
-            "dataframe": pd.DataFrame(),
-            "cell_gallery": [],
-            "warning": f"No valid cells found — {len(circles)} circles detected but none passed the confidence threshold ({confidence_thresh}).",
-        }
+            prob = torch.sigmoid(m1(image_t).squeeze(1))
+            crop_mask = (prob >= seg_thresh).cpu()
+            cell_gallery.append(T.ToPILImage()(draw_segmentation_masks(image_t.squeeze(0).cpu(), crop_mask, 0.5, (0, 255, 0))))
 
-    # Build ratio table and overlay segmentation
-    raius = []
-    field = []
-    mask_field = []
-    ratio = []
-    y = T.ToTensor()(Image.fromarray(cv2.cvtColor(captured_frame2, cv2.COLOR_BGR2RGB)))
-    padded_h, padded_w = captured_frame2.shape[:2]
+            # Place the crop mask back into full-image coordinates
+            pad = nn.ZeroPad2d((cx - _CROP_HALF, padded_w - _CROP_HALF - cx,
+                                cy - _CROP_HALF, padded_h - _CROP_HALF - cy))
+            full_mask = (pad(prob) >= seg_thresh).cpu()
+            overlay = draw_segmentation_masks(overlay, full_mask, 0.45, (0, 255, 0))
 
-    with torch.no_grad():
-        for i in range(len(new_circle)):
-            cv2.circle(captured_frame2, center=(new_circle[i][0], new_circle[i][1]),
-                       radius=new_circle[i][2], color=(0, 255, 0), thickness=2)
-            a = cut(img_padded.copy(), new_circle[i], config)
-            image = Image.fromarray(cv2.cvtColor(a, cv2.COLOR_BGR2RGB))
-            image_t = tranform(image).to(device).unsqueeze(0)
-            output1 = m1(image_t)
-            x = torch.sigmoid(output1.squeeze(1))
+            mask_px = int(full_mask.sum())
+            nuclear_px = math.pi * r * r
+            cells.append({
+                "cell_id": len(cells) + 1,
+                "x": int(cx - value),
+                "y": int(cy - value),
+                "radius_px": int(r),
+                "nuclear_area_um2": nuclear_px * um2,
+                "cytoplasmic_area_um2": mask_px * um2,
+                "nc_ratio": nuclear_px / max(mask_px, 1),
+                "classifier_score": score,
+            })
 
-            pad_left = new_circle[i][0] - 112
-            pad_right = padded_w - 112 - new_circle[i][0]
-            pad_top = new_circle[i][1] - 112
-            pad_bottom = padded_h - 112 - new_circle[i][1]
-            pad = nn.ZeroPad2d((pad_left, pad_right, pad_top, pad_bottom))
-            x = pad(x)
-            res = x >= seg_thresh
-            y = torchvision.utils.draw_segmentation_masks(y, res, 0.45, (0, 255, 0))
-            positive_pixel_count = res.sum()
+    all_circles_img = all_circles[value:-value, value:-value]
+    if not cells:
+        return {"annotated_img": img.copy(), "all_circles_img": all_circles_img, "cells": [],
+                "cell_gallery": [], "n_candidates": len(circles), "warning": "warn_no_cells_passed"}
 
-            raius.append(int(new_circle[i][2]))
-            field.append(math.pi * new_circle[i][2] * new_circle[i][2] * um * um)
-            mask_field.append(int(positive_pixel_count.cpu()) * um * um)
-            ratio.append((math.pi * new_circle[i][2] * new_circle[i][2]) /
-                         max(int(positive_pixel_count.cpu()), 1))
-
-    if raius:
-        raius.append(round(statistics.mean(raius), 2))
-        field.append(round(statistics.mean(field), 4))
-        mask_field.append(round(statistics.mean(mask_field), 4))
-        ratio.append(round(statistics.mean(ratio), 4))
-
-    data = {
-        "radius": raius,
-        "nuclear_area": field,
-        "cytoplasmic_area": mask_field,
-        "ratio": ratio,
-    }
-    df = pd.DataFrame(data)
-
-    # Convert overlay tensor to BGR numpy for output
-    annotated_pil = T.ToPILImage()(y[:, value:-value, value:-value])
+    annotated_pil = T.ToPILImage()(overlay[:, value:-value, value:-value])
     annotated_img = cv2.cvtColor(np.array(annotated_pil), cv2.COLOR_RGB2BGR)
-
-    # Crop padding from all-circles image
-    all_circles_img = captured_frame1[value:-value, value:-value]
+    draw_labels(annotated_img, [(c["cell_id"], (c["x"], c["y"])) for c in cells])
 
     return {
         "annotated_img": annotated_img,
         "all_circles_img": all_circles_img,
-        "dataframe": df,
+        "cells": cells,
         "cell_gallery": cell_gallery,
+        "n_candidates": len(circles),
         "warning": None,
     }
+
+
+def summarize_cells(cells):
+    """Per-image summary: number of accepted cells and the mean of each measurement."""
+    summary = {"n_cells": len(cells)}
+    for field in _SUMMARY_FIELDS:
+        summary[f"mean_{field}"] = statistics.mean(c[field] for c in cells) if cells else None
+    return summary
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--mix_dir')
-    parser.add_argument('--all_sample_dir', default='./sample/')
-    parser.add_argument('--test_dir', default='./test/')
+    parser.add_argument('--all_sample_dir', default=str(_MODULE_DIR / 'sample') + '/')
+    parser.add_argument('--test_dir', default=str(_MODULE_DIR / 'test') + '/')
     args = parser.parse_args()
 
     img = cv2.imread(args.mix_dir)
     models = load_models()
     result = analyze_cells(img, models)
 
-    for i, cell_img in enumerate(result["cell_gallery"]):
-        cell_img.save(args.all_sample_dir + str(i) + '.jpg')
+    for cell, cell_img in zip(result["cells"], result["cell_gallery"]):
+        cell_img.save(args.all_sample_dir + str(cell["cell_id"]) + '.jpg')
 
-    result["dataframe"].to_csv(args.test_dir + 'test.csv')
+    pd.DataFrame(result["cells"]).to_csv(args.test_dir + 'test.csv', index=False)
+    pd.DataFrame([summarize_cells(result["cells"])]).to_csv(args.test_dir + 'test_summary.csv', index=False)
     annotated = Image.fromarray(cv2.cvtColor(result["annotated_img"], cv2.COLOR_BGR2RGB))
     annotated.save(args.test_dir + 'test.jpg')
