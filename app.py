@@ -262,7 +262,8 @@ def build_tab(tr, lang, tab):
             profile = tr.add(gr.Dropdown, lambda lang: {"label": t("profile", lang),
                                                         "choices": [(t(f"profile_{n}", lang), n) for n in names]},
                              value=DEFAULT_PROFILE, scale=0, min_width=260)
-            description = gr.Markdown(describe(tr.lang, DEFAULT_PROFILE))
+            with gr.Column(min_width=320):  # wraps below the selector on phones
+                description = gr.Markdown(describe(tr.lang, DEFAULT_PROFILE))
         with gr.Row():
             with gr.Column(scale=4):
                 files = tr(gr.File, "upload", file_count="multiple", file_types=IMAGE_TYPES)
