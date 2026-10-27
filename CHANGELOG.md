@@ -20,6 +20,7 @@ All changes relative to the [original repository](https://github.com/dhcl8881/nh
 - Models load on first use instead of at startup. If the dhcl8881 weights or the Cellpose model are missing, the app still starts and shows a message on the affected analysis.
 - `app.py` handles all profiles through one result format (`profiles/base.py`), so adding a profile needs no app changes.
 - Shared contour labelling helpers moved from `liver/main.py` to `annotate.py`.
+- `dhcl8881` N/C CSV: `cytoplasmic_area_um2` renamed to `cell_area_um2` ("Cell area"), because it is the whole U-Net mask with the nucleus included. Values are unchanged.
 
 ## 2026-10-22 (cell IDs, 中/英)
 
