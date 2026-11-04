@@ -3,6 +3,7 @@ import logging
 import shutil
 import tempfile
 import time
+import warnings
 import zipfile
 from pathlib import Path
 
@@ -203,6 +204,15 @@ def make_handler(tab, names):
 # ---------------------------------------------------------------------------
 # Build UI
 # ---------------------------------------------------------------------------
+# Gradio draws gallery tiles as squares as wide as a column, so a single wide image overflows a
+# short gallery and only its top shows. In .fit-gallery each row is the gallery's full height
+# and object_fit="contain" scales the whole image into it.
+CSS = """
+.fit-gallery .grid-container { height: 100%; grid-template-rows: none !important; grid-auto-rows: 100% !important; }
+.fit-gallery .thumbnail-item { aspect-ratio: auto !important; }
+"""
+
+
 class Translatable:
     """Creates components with text in the current language and remembers them for relabelling."""
 
@@ -267,7 +277,8 @@ def build_tab(tr, lang, tab):
         with gr.Row():
             with gr.Column(scale=4):
                 files = tr(gr.File, "upload", file_count="multiple", file_types=IMAGE_TYPES)
-                preview = tr(gr.Gallery, "preview", columns=4, height=150, interactive=False)
+                preview = tr(gr.Gallery, "preview", columns=4, height=150, object_fit="contain",
+                             elem_classes="fit-gallery", interactive=False)
             button = tr(gr.Button, tab["button"], prop="value", variant="primary", scale=0)
         files.change(preview_uploads, inputs=[files], outputs=[preview])
 
@@ -282,10 +293,11 @@ def build_tab(tr, lang, tab):
 
         outputs = {
             "warnings": gr.Markdown(""),
-            "gallery": tr(gr.Gallery, "results", columns=tab["columns"], interactive=False),
+            "gallery": tr(gr.Gallery, "results", columns=tab["columns"], height=600,
+                          object_fit="contain", elem_classes="fit-gallery", interactive=False),
         }
         if "crops" in tab["outputs"]:
-            outputs["crops"] = tr(gr.Gallery, "crops", columns=6, interactive=False)
+            outputs["crops"] = tr(gr.Gallery, "crops", columns=6, object_fit="contain", interactive=False)
         if "summary" in tab["outputs"]:
             outputs["summary"] = tr(gr.Dataframe, "summary_table")
             outputs["details"] = tr(gr.Dataframe, "details_table")
@@ -316,6 +328,30 @@ def build_app():
     return app
 
 
+def get_lan_ip():
+    """Best-effort detection of this PC's LAN IP (no packets are sent)."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    build_app().launch(server_name=APP_CFG["server_name"], server_port=APP_CFG["server_port"])
+    # Deliberately hidden log noise; keep in sync with CHANGELOG.md ("Suppressed messages").
+    # cpsam does not use the optional CPDINO (DINOv3) backbone.
+    logging.getLogger("cellpose.vit").addFilter(lambda r: "CPDINO" not in r.getMessage())
+    # Cellpose's own sparse tensors are valid; the invariant checks only cost speed.
+    warnings.filterwarnings("ignore", message="Sparse invariant checks")
+    PORT = APP_CFG["server_port"]
+    app = build_app()
+    print(f"\nLocal access:   http://localhost:{PORT}")
+    lan_ip = get_lan_ip()
+    if lan_ip:
+        print(f"Network access: http://{lan_ip}:{PORT}\n")
+    app.launch(server_name=APP_CFG["server_name"], server_port=PORT, quiet=True, css=CSS)

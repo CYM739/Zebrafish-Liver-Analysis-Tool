@@ -8,7 +8,25 @@ All changes relative to the [original repository](https://github.com/dhcl8881/nh
 
 - `cpsam-v1` nucleus area: Cellpose's nucleus masks include the blurred glow around each nucleus and were a median 1.28× the area inside the half-maximum brightness edge. Each nucleus is now shrunk to that edge (`cell.nucleus_edge: 0.5`, dev-side). On the sample images the refined nuclei match the half-maximum edge (median 1.01×) and dhcl8881's Hough circles (median 0.98×), and the N/C medians drop from 0.29–0.36 to 0.20–0.24 (dhcl8881: 0.18–0.21).
 
-## [Unreleased] - 2026-10-24 (profiles)
+## [Unreleased] - 2026-10-27 (portable folders)
+
+### Changed
+
+- `start.bat` keeps downloads inside the repo: uv cache (`.uv-cache/`), uv-managed Python (`.python/`), Cellpose models (`models/`) and Hugging Face cache (`.hf/`); all git-ignored. The uv cache shares a drive with `.venv`, so hardlinking works and the "Failed to hardlink" warning is gone. Moving the folder to another drive letter or PC still needs `.venv` rebuilt (`uv sync`).
+- `start.bat` sets `UV_PYTHON_PREFERENCE=only-managed`, so Python is always uv's copy in `.python/`, never one installed on the PC.
+- Upload preview and results galleries show each image whole, scaled to the gallery's height (custom CSS in `app.py`; Gradio otherwise draws column-wide square tiles, so a wide image showed only its top). The results gallery is 600 px tall; crops scale to fit their tiles.
+- On launch the app prints its local and LAN (network) URLs instead of Gradio's startup banner, so other PCs on the network know where to connect.
+
+### Suppressed messages
+
+Hidden on purpose (see the end of `app.py`); everything else is still shown.
+
+| Message | Why it is safe |
+| --- | --- |
+| `cellpose.vit`: "Could not import CPDINO…" | Optional DINOv3 backbone; the `cpsam` models do not use it. `dinov3` is intentionally not installed. |
+| `UserWarning: Sparse invariant checks are implicitly disabled…` | Raised inside Cellpose's flow dynamics on valid tensors; enabling the checks would only slow it down. |
+
+## 2026-10-24 (profiles)
 
 ### Added
 
