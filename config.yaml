@@ -69,6 +69,7 @@ profiles:
       diameter: 0                      # typical cell diameter in px; 0 = automatic
       flow_threshold: 0.4
       cellprob_threshold: 0.0
+      nucleus_edge: 0.5                # nucleus edge at this brightness between background (0) and peak (1); 0.5 = half maximum
       nucleus_overlap_min: 0.5         # a nucleus belongs to the cell holding at least this fraction of it
       max_nucleus_fraction: 0.8        # above this, the cell outline was drawn around the nucleus only
       min_relative_brightness: 0.5     # skip cells dimmer than this fraction of the image's median cell (out of focus)

@@ -20,6 +20,7 @@ _EXCLUDED_COLOR = (128, 128, 128)
 _CELL_COLOR = (0, 255, 0)
 _NUCLEUS_COLOR = (0, 255, 255)
 _CROP_MARGIN = 15
+_BG_GAP = 8  # px between a nucleus and the background sampled around it
 _MEASUREMENTS = ("cell_area_um2", "nuclear_area_um2", "cytoplasmic_area_um2", "nc_ratio")
 
 
@@ -36,6 +37,27 @@ def _segment(model, bgr, cfg):
     masks, *_ = model.eval(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), channel_axis=2, diameter=cfg["diameter"] or None,
                            flow_threshold=cfg["flow_threshold"], cellprob_threshold=cfg["cellprob_threshold"])
     return masks
+
+
+def _refine_nuclei(nuclei, stain, edge):
+    """Shrink each Cellpose nucleus to its brightness edge, since Cellpose includes the blurred glow around it.
+    Edge = background + edge × (peak − background); peak = 90th percentile inside the nucleus,
+    background = median of nucleus-free pixels 8–16 px around it (edge 0.5 = half maximum)."""
+    stain = cv2.GaussianBlur(stain, (3, 3), 0).astype(np.float32)
+    refined = np.zeros_like(nuclei)
+    h, w = nuclei.shape
+    for label, box in enumerate(ndimage.find_objects(nuclei), 1):
+        if box is None:
+            continue
+        win = tuple(slice(max(s.start - 2 * _BG_GAP, 0), min(s.stop + 2 * _BG_GAP, n)) for s, n in zip(box, (h, w)))
+        nucleus, value = nuclei[win] == label, stain[win]
+        around = (nuclei[win] == 0) & ~ndimage.binary_dilation(nucleus, iterations=_BG_GAP)
+        peak = np.percentile(value[nucleus], 90)
+        bg = np.median(value[around]) if around.any() else value.min()
+        core, n = ndimage.label(nucleus & (value > bg + edge * (peak - bg)))
+        if n:  # keep the largest piece
+            refined[win][core == np.argmax(np.bincount(core.ravel())[1:]) + 1] = label
+    return refined
 
 
 def _nuclei_per_cell(cells, nuclei, overlap_min):
@@ -69,7 +91,7 @@ def cell(img, cfg):
     stain = np.zeros_like(img)
     channel = _CHANNELS[cfg["nucleus_channel"]]
     stain[..., channel] = img[..., channel]
-    nuclei = _segment(model, stain, cfg)
+    nuclei = _refine_nuclei(_segment(model, stain, cfg), img[..., channel], cfg["nucleus_edge"])
 
     labels = np.unique(cells)[1:]
     if not len(labels):
