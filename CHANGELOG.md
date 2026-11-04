@@ -2,6 +2,12 @@
 
 All changes relative to the [original repository](https://github.com/dhcl8881/nhri) by dhcl8881.
 
+## [Unreleased] - 2026-11-04 (nucleus edge)
+
+### Fixed
+
+- `cpsam-v1` nucleus area: Cellpose's nucleus masks include the blurred glow around each nucleus and were a median 1.28× the area inside the half-maximum brightness edge. Each nucleus is now shrunk to that edge (`cell.nucleus_edge: 0.5`, dev-side). On the sample images the refined nuclei match the half-maximum edge (median 1.01×) and dhcl8881's Hough circles (median 0.98×), and the N/C medians drop from 0.29–0.36 to 0.20–0.24 (dhcl8881: 0.18–0.21).
+
 ## [Unreleased] - 2026-10-24 (profiles)
 
 ### Added
