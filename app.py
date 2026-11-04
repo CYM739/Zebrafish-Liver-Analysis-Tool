@@ -206,10 +206,15 @@ def make_handler(tab, names):
 # ---------------------------------------------------------------------------
 # Gradio draws gallery tiles as squares as wide as a column, so a single wide image overflows a
 # short gallery and only its top shows. In .fit-gallery each row is the gallery's full height
-# and object_fit="contain" scales the whole image into it.
+# and object_fit="contain" scales the whole image into it. On phones, .stack-on-phone galleries show
+# one column-wide square per row instead, since several images side by side would be tiny.
 CSS = """
 .fit-gallery .grid-container { height: 100%; grid-template-rows: none !important; grid-auto-rows: 100% !important; }
 .fit-gallery .thumbnail-item { aspect-ratio: auto !important; }
+@media (max-width: 640px) {
+  .stack-on-phone .grid-container { height: auto; grid-template-columns: 1fr !important; grid-auto-rows: auto !important; }
+  .stack-on-phone .thumbnail-item { aspect-ratio: 1 !important; }
+}
 """
 
 
@@ -294,7 +299,7 @@ def build_tab(tr, lang, tab):
         outputs = {
             "warnings": gr.Markdown(""),
             "gallery": tr(gr.Gallery, "results", columns=tab["columns"], height=600,
-                          object_fit="contain", elem_classes="fit-gallery", interactive=False),
+                          object_fit="contain", elem_classes=["fit-gallery", "stack-on-phone"], interactive=False),
         }
         if "crops" in tab["outputs"]:
             outputs["crops"] = tr(gr.Gallery, "crops", columns=6, object_fit="contain", interactive=False)
@@ -317,7 +322,8 @@ def build_tab(tr, lang, tab):
 def build_app():
     default_lang = APP_CFG["default_language"]
     tr = Translatable(default_lang)
-    with gr.Blocks(title="Zebrafish Liver Analysis Tool", delete_cache=(RETENTION_S, RETENTION_S)) as app:
+    with gr.Blocks(title="Zebrafish Liver Analysis Tool", delete_cache=(RETENTION_S, RETENTION_S),
+                   analytics_enabled=False) as app:  # no usage reports to Gradio / Hugging Face
         with gr.Row(equal_height=True):
             with gr.Column(scale=1, min_width=320):  # wraps the language toggle below the title on phones
                 tr(gr.Markdown, "title", prop="value")
@@ -348,10 +354,12 @@ if __name__ == "__main__":
     logging.getLogger("cellpose.vit").addFilter(lambda r: "CPDINO" not in r.getMessage())
     # Cellpose's own sparse tensors are valid; the invariant checks only cost speed.
     warnings.filterwarnings("ignore", message="Sparse invariant checks")
-    PORT = APP_CFG["server_port"]
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # Gradio's internal HTTP requests
+    PORT, HOST = APP_CFG["server_port"], APP_CFG["server_name"]
     app = build_app()
     print(f"\nLocal access:   http://localhost:{PORT}")
-    lan_ip = get_lan_ip()
+    # Other PCs can connect only when the server listens beyond this PC (0.0.0.0 = all networks)
+    lan_ip = get_lan_ip() if HOST == "0.0.0.0" else None if HOST in ("127.0.0.1", "localhost") else HOST
     if lan_ip:
         print(f"Network access: http://{lan_ip}:{PORT}\n")
-    app.launch(server_name=APP_CFG["server_name"], server_port=PORT, quiet=True, css=CSS)
+    app.launch(server_name=HOST, server_port=PORT, quiet=True, css=CSS)

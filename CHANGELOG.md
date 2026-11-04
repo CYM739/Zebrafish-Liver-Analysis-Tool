@@ -12,10 +12,11 @@ All changes relative to the [original repository](https://github.com/dhcl8881/nh
 
 ### Changed
 
-- `start.bat` keeps downloads inside the repo: uv cache (`.uv-cache/`), uv-managed Python (`.python/`), Cellpose models (`models/`) and Hugging Face cache (`.hf/`); all git-ignored. The uv cache shares a drive with `.venv`, so hardlinking works and the "Failed to hardlink" warning is gone. Moving the folder to another drive letter or PC still needs `.venv` rebuilt (`uv sync`).
+- `start.bat` keeps downloads inside the repo: uv cache (`.uv-cache/`), uv-managed Python (`.python/`), Cellpose models (`models/`) and Hugging Face cache (`.hf/`); all git-ignored (top-level folders only). README explains how to pre-download the model into `models/`. The uv cache shares a drive with `.venv`, so hardlinking works and the "Failed to hardlink" warning is gone. Moving the folder to another drive letter or PC still needs `.venv` rebuilt (`uv sync`).
 - `start.bat` sets `UV_PYTHON_PREFERENCE=only-managed`, so Python is always uv's copy in `.python/`, never one installed on the PC.
-- Upload preview and results galleries show each image whole, scaled to the gallery's height (custom CSS in `app.py`; Gradio otherwise draws column-wide square tiles, so a wide image showed only its top). The results gallery is 600 px tall; crops scale to fit their tiles.
-- On launch the app prints its local and LAN (network) URLs instead of Gradio's startup banner, so other PCs on the network know where to connect.
+- Upload preview and results galleries show each image whole, scaled to the gallery's height (custom CSS in `app.py`; Gradio otherwise draws column-wide square tiles, so a wide image showed only its top). The results gallery is 600 px tall; crops scale to fit their tiles. On phones (≤ 640 px wide) the results show one image per row, as a column-wide square.
+- On launch the app prints its local and LAN (network) URLs instead of Gradio's startup banner, so other PCs on the network know where to connect. The LAN URL is printed only when `app.server_name` lets other PCs connect (`0.0.0.0`, or the address given).
+- Gradio usage analytics are off (`analytics_enabled=False`): no usage reports to Gradio / Hugging Face, and no failing requests on offline PCs.
 
 ### Suppressed messages
 
@@ -25,6 +26,7 @@ Hidden on purpose (see the end of `app.py`); everything else is still shown.
 | --- | --- |
 | `cellpose.vit`: "Could not import CPDINO…" | Optional DINOv3 backbone; the `cpsam` models do not use it. `dinov3` is intentionally not installed. |
 | `UserWarning: Sparse invariant checks are implicitly disabled…` | Raised inside Cellpose's flow dynamics on valid tensors; enabling the checks would only slow it down. |
+| `httpx` INFO lines (`HTTP Request: …`) | Gradio's own requests to the local server; warnings and errors still show. |
 
 ## 2026-10-24 (profiles)
 
