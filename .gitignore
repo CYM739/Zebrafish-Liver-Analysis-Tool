@@ -4,7 +4,7 @@ __pycache__/
 *.egg-info/
 *.pt
 gradio.log
-.uv-cache/
-.python/
-models/
-.hf/
+/.uv-cache/
+/.python/
+/models/
+/.hf/

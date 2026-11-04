@@ -16,11 +16,14 @@ uv sync
 
 These are available from the [original author's Google Drive](https://github.com/dhcl8881/nhri) (see original repo for link).
 
-**cpsam-v1 profile** — the Cellpose-SAM model (`cpsam_v2`, ~1.15GB) is downloaded to `~/.cellpose/models` on first use. To install it in advance (e.g. for an offline machine):
+**cpsam-v1 profile** — the Cellpose-SAM model (`cpsam_v2`, ~1.15GB) is downloaded on first use: to `models/` in this folder when started with `start.bat`, otherwise to `~/.cellpose/models` (or wherever `CELLPOSE_LOCAL_MODELS_PATH` points). To install it in advance (e.g. for an offline machine), run in this folder:
 
-```bash
+```bat
+set "CELLPOSE_LOCAL_MODELS_PATH=%cd%\models"
 uv run python -c "from cellpose import models; models.CellposeModel(pretrained_model='cpsam_v2')"
 ```
+
+Or copy `models/` from a PC where it has already been downloaded.
 
 The Cellpose code is BSD-licensed, but its pretrained models are trained on CC-BY-NC data: fine for academic research, not for commercial use.
 
@@ -29,7 +32,7 @@ The Cellpose code is BSD-licensed, but its pretrained models are trained on CC-B
 ```bash
 uv run python app.py
 ```
-Or double-click `start.bat` on Windows.
+Or double-click `start.bat` on Windows. It keeps everything it downloads (Python, uv cache, Cellpose models) inside this folder; see CHANGELOG (portable folders).
 
 Opens at http://localhost:7860. Server address, port, default UI language (中文 / English) and how long results are kept are set in the `app` section of `config.yaml`.
 
