@@ -16,7 +16,7 @@ from PIL import Image
 from config import get_config, merge_overrides, profile_config
 from i18n import LANGUAGES, localize_columns, t
 from profiles import DEFAULT_PROFILE, PROFILES, offered
-from profiles.base import BOOL, HSV, ModelUnavailable
+from profiles.base import BOOL, COUNT_STAINS, HSV, ModelUnavailable
 
 CONFIG = get_config()
 APP_CFG = CONFIG["app"]
@@ -43,6 +43,16 @@ def read_uploaded_image(filepath):
     return cv2.imdecode(np.fromfile(filepath, dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
+def stained_cell_type(img):
+    """Counting cell type whose stain clearly dominates a single-stain image, else None (config app.stain_*).
+    A pixel is clearly stained when its stain channel exceeds both other channels by stain_margin."""
+    px = img.astype(np.int16)
+    counts = {cell_type: int((px[..., ch] - np.delete(px, ch, axis=2).max(axis=2) > APP_CFG["stain_margin"]).sum())
+              for cell_type, ch in COUNT_STAINS.items()}
+    (top, n), (_, other) = sorted(counts.items(), key=lambda kv: -kv[1])
+    return top if n >= APP_CFG["stain_min_px"] and n >= APP_CFG["stain_dominance"] * other else None
+
+
 def save_image(img, path):
     """Save a BGR array or PIL image as PNG."""
     if not isinstance(img, Image.Image):
@@ -51,8 +61,9 @@ def save_image(img, path):
     return str(path)
 
 
-def preview_uploads(files):
-    """Convert uploaded files (including .tif) to previewable images."""
+def preview_uploads(*file_lists):
+    """Convert the files of every upload box (including .tif) to previewable images."""
+    files = [f for files in file_lists for f in files or []]
     if not files:
         return []
     run_dir = new_run_dir()
@@ -159,8 +170,12 @@ class Batch:
         }
 
 
+# "uploads": (label i18n key, cell type) per upload box. A box with a cell type takes single-stain images
+# whose cells are all of that type (passed to "count" as cell_types); None = any image, every analysis.
+UPLOAD_ANY = (("upload", None),)
 TABS = [
     {"label": "tab_count", "button": "btn_count", "analyses": ["count"], "prefix": "counting", "columns": 2,
+     "uploads": (("upload_neutrophil", "neutrophil"), ("upload_macrophage", "macrophage")),
      "outputs": ["warnings", "gallery", "summary", "details", "csv", "zip"]},
     {"label": "tab_boundary", "button": "btn_boundary", "analyses": ["boundary"], "prefix": "boundary", "columns": 2,
      "outputs": ["warnings", "gallery", "zip"]},
@@ -172,23 +187,34 @@ TABS = [
 
 
 def make_handler(tab, names):
-    def run(lang, profile, files, *values, progress=gr.Progress()):
-        # Settings inputs cover every offered profile (see build_tab); keep only the selected profile's
-        values = iter(values)
+    uploads = tab.get("uploads", UPLOAD_ANY)
+
+    def run(lang, profile, *inputs, progress=gr.Progress()):
+        # Inputs: one file list per upload box, then settings for every offered profile (see build_tab);
+        # keep only the selected profile's settings
+        jobs = [(f, cell_type) for (_, cell_type), files in zip(uploads, inputs) for f in files or []]
+        values = iter(inputs[len(uploads):])
         cfgs = {name: {a: parse_settings(PROFILES[name].ANALYSES[a].settings, profile_config(name, a), values)
                        for a in tab["analyses"]}
                 for name in names}[profile]
         batch = Batch(lang, profile, cfgs)
         analyses = PROFILES[profile].ANALYSES
-        for f in progress.tqdm(files or [], desc=batch.t("progress")):
+        for f, cell_type in progress.tqdm(jobs, desc=batch.t("progress")):
             batch.begin(f)
             img = read_uploaded_image(f)
             if img is None:
                 batch.warn("warn_read_failed")
                 continue
+            kwargs = {}
+            if cell_type:
+                detected = stained_cell_type(img)
+                if detected and detected != cell_type:  # put in the other box: count what it shows
+                    batch.warn(f"warn_upload_is_{detected}")
+                    cell_type = detected
+                kwargs = {"cell_types": (cell_type,)}
             try:
                 for a in tab["analyses"]:
-                    batch.add(analyses[a].run(img, cfgs[a]))
+                    batch.add(analyses[a].run(img, cfgs[a], **kwargs))
             except ModelUnavailable as e:
                 log.exception("Model unavailable")
                 batch.warn(e.args[0])
@@ -281,11 +307,14 @@ def build_tab(tr, lang, tab):
                 description = gr.Markdown(describe(tr.lang, DEFAULT_PROFILE))
         with gr.Row():
             with gr.Column(scale=4):
-                files = tr(gr.File, "upload", file_count="multiple", file_types=IMAGE_TYPES)
+                with gr.Row():
+                    files = [tr(gr.File, label, file_count="multiple", file_types=IMAGE_TYPES, min_width=240)
+                             for label, _ in tab.get("uploads", UPLOAD_ANY)]
                 preview = tr(gr.Gallery, "preview", columns=4, height=150, object_fit="contain",
                              elem_classes="fit-gallery", interactive=False)
             button = tr(gr.Button, tab["button"], prop="value", variant="primary", scale=0)
-        files.change(preview_uploads, inputs=[files], outputs=[preview])
+        for box in files:
+            box.change(preview_uploads, inputs=files, outputs=[preview])
 
         panels, settings = {}, []
         with tr(gr.Accordion, "advanced", open=False):
@@ -311,7 +340,7 @@ def build_tab(tr, lang, tab):
                 outputs["csv"] = tr(gr.File, "csv", file_count="multiple")
             outputs["zip"] = tr(gr.File, "zip")
 
-        button.click(make_handler(tab, names), inputs=[lang, profile, files] + settings,
+        button.click(make_handler(tab, names), inputs=[lang, profile, *files] + settings,
                      outputs=[outputs[k] for k in tab["outputs"]])
         lang.change(describe, inputs=[lang, profile], outputs=[description])
         profile.change(describe, inputs=[lang, profile], outputs=[description])

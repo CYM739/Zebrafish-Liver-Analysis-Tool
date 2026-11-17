@@ -30,6 +30,8 @@ STRINGS = {
 
     # Shared components
     "upload": {"en": "Upload Images", "zh": "上傳影像"},
+    "upload_neutrophil": {"en": "Green images (neutrophils)", "zh": "綠色影像（嗜中性球）"},
+    "upload_macrophage": {"en": "Red images (macrophages)", "zh": "紅色影像（巨噬細胞）"},
     "preview": {"en": "Image Preview", "zh": "影像預覽"},
     "advanced": {"en": "Advanced Settings", "zh": "進階設定"},
     "results": {"en": "Results", "zh": "分析結果"},
@@ -85,6 +87,10 @@ STRINGS = {
     # Warnings
     "warnings": {"en": "### ⚠ Warnings", "zh": "### ⚠ 注意"},
     "warn_read_failed": {"en": "This file could not be opened as an image.", "zh": "無法開啟此影像檔。"},
+    "warn_upload_is_neutrophil": {"en": "This is a green image, so neutrophils were counted.",
+                                  "zh": "這是綠色影像，已改算嗜中性球。"},
+    "warn_upload_is_macrophage": {"en": "This is a red image, so macrophages were counted.",
+                                  "zh": "這是紅色影像，已改算巨噬細胞。"},
     "warn_no_liver_outline": {
         "en": "No liver outline found. Make sure the white dashed liver outline is drawn on the image.",
         "zh": "找不到肝臟外框。請確認影像上已畫上白色虛線的肝臟範圍。"},

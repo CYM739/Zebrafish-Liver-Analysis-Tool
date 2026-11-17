@@ -80,6 +80,12 @@ app:
   server_port: 7860
   default_language: zh        # zh | en
   result_retention_minutes: 120
+  # Counting tab: an image put in the other color's box is counted as the color it shows. It is taken as
+  # green or red only with at least stain_min_px clearly green/red pixels (that channel above both others
+  # by stain_margin) and stain_dominance times as many as of the other color; otherwise the box decides.
+  stain_margin: 30
+  stain_min_px: 2000
+  stain_dominance: 10
 
 annotation:
   label_color: [0, 255, 255]  # BGR (yellow)

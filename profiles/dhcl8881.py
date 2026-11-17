@@ -4,20 +4,22 @@ import functools
 from cell.main import analyze_cells, load_models, summarize_cells
 from liver.main import count_cells
 from liver1.main import detect_boundary
-from profiles.base import HSV, Analysis, ModelUnavailable, result
+from profiles.base import COUNT_STAINS, HSV, Analysis, ModelUnavailable, result
 
 NAME = "dhcl8881"
+_CELL_TYPES = (  # (cell type, count_cells key, its result image, caption)
+    ("macrophage", "macrophages", "red_img", "cap_macrophages"),
+    ("neutrophil", "neutrophils", "green_img", "cap_neutrophils"),
+)
 
 
-def count(img, cfg):
+def count(img, cfg, cell_types=tuple(COUNT_STAINS)):
     r = count_cells(img, cfg)
-    cells = [{"image": key, "cell_type": cell_type, **c}
-             for key, cell_type in (("macrophages", "macrophage"), ("neutrophils", "neutrophil")) for c in r[key]]
+    kinds = [k for k in _CELL_TYPES if k[0] in cell_types]
     return result(
-        images=[("macrophages", "cap_macrophages", r["red_img"], {"n": len(r["macrophages"])}),
-                ("neutrophils", "cap_neutrophils", r["green_img"], {"n": len(r["neutrophils"])})],
-        cells=cells,
-        summary={"macrophage_count": len(r["macrophages"]), "neutrophil_count": len(r["neutrophils"])},
+        images=[(key, caption, r[image], {"n": len(r[key])}) for _, key, image, caption in kinds],
+        cells=[{"image": key, "cell_type": cell_type, **c} for cell_type, key, _, _ in kinds for c in r[key]],
+        summary={f"{cell_type}_count": len(r[key]) for cell_type, key, _, _ in kinds},
         warning=r["warning"])
 
 

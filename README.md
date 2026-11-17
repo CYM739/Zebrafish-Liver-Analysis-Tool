@@ -42,7 +42,7 @@ A profile is a complete set of algorithms and models. Tabs where more than one p
 
 | Profile | What it is |
 |---|---|
-| `dhcl8881` (default) | The original author's algorithms and models, unchanged (`liver/`, `liver1/`, `cell/`). Reproduces earlier results exactly. |
+| `dhcl8881` (default) | The original author's algorithms and models, unchanged (`liver/`, `liver1/`, `cell/`). Reproduces earlier results exactly, except that counting now takes single-stain images (see Tabs). |
 | `cpsam-v1` | Offered in the app for the N/C ratio only (`offered_in_app`): Cellpose-SAM cell + nucleus segmentation with quality filters. Its N/C values have not yet been validated against manual annotation. Its count and boundary fixes (`profiles/cpsam_v1/`: corrected scale-bar exclusion, both red hue ranges, boundary regions outlined separately, possibly merged cells flagged in orange) stay dev-only until validated. |
 
 Profile settings live under `profiles:` in `config.yaml`; the default profile is `default_profile` and must offer every analysis. `offered_in_app` limits a profile to the listed analyses in the app.
@@ -55,10 +55,10 @@ To add a profile, add a module under `profiles/` that defines `NAME` and `ANALYS
 
 ## Tabs
 
-1. **Neutrophil / Macrophage Count** — counts green (neutrophil) and red (macrophage) cells in liver region
+1. **Neutrophil / Macrophage Count** — counts neutrophils in green images and macrophages in red images (the single-stain channels exported from ImageJ), inside the white dashed liver outline drawn on each image. An image put in the other color's box is counted as the color it shows, with a note.
 2. **Liver Boundary Detection** — detects liver outline from green fluorescence
 3. **Cell N/C Ratio** — nuclear-to-cytoplasmic area ratio (`dhcl8881`: ResNet18 + U-Net; `cpsam-v1`: Cellpose-SAM)
-4. **Combined** — boundary detection + cell counting in one pass
+4. **Combined** — boundary detection + counting of both cell types in one pass, on merged images
 
 ## Output files
 
@@ -66,7 +66,7 @@ Every detected cell is numbered on the result image, and the same number appears
 
 | Tab | Profile | `*_summary.csv` (one row per image) | `*_cells.csv` (one row per cell) |
 |---|---|---|---|
-| Count / Combined | `dhcl8881` | `macrophage_count`, `neutrophil_count` | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` |
+| Count / Combined | `dhcl8881` | `neutrophil_count` (green images), `macrophage_count` (red images); Combined: both | `result_image`, `cell_type`, `cell_id` (`M1`… / `N1`…), `x`, `y`, `area_px` |
 | Cell N/C Ratio | `dhcl8881` | `n_candidates`, `n_cells`, mean of each measurement | `result_image`, `cell_id`, `x`, `y`, `radius_px`, `nuclear_area_um2` (Hough circle πr²), `cell_area_um2`*, `nc_ratio` (nucleus ÷ whole cell), `classifier_score`, `crop_image` |
 | Cell N/C Ratio | `cpsam-v1` | `n_segmented`, `n_cells`, `n_excluded_*` per quality filter, means, `median_nc_ratio` | `result_image`, `cell_id`, `x`, `y`, `cell_area_um2`, `nuclear_area_um2`, `cytoplasmic_area_um2` (cell − nucleus), `nc_ratio` (per `nc_denominator`), `crop_image` |
 

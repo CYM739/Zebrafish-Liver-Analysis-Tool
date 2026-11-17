@@ -13,7 +13,7 @@ import numpy as np
 
 from annotate import contour_records, draw_contours
 from liver.utils import find, sortPoints
-from profiles.base import result
+from profiles.base import COUNT_STAINS, result
 
 CELL_TYPES = (  # (cell type, ID prefix, result image, HSV ranges in config, caption)
     ("macrophage", "M", "macrophages", ("hsv_red1", "hsv_red2"), "cap_macrophages_flagged"),
@@ -58,14 +58,15 @@ def _flag_merged(cells, cfg):
     return {i for i, c in enumerate(cells) if c["possibly_merged"]}
 
 
-def count(img, cfg):
+def count(img, cfg, cell_types=tuple(COUNT_STAINS)):
+    kinds = [k for k in CELL_TYPES if k[0] in cell_types]
     liver = liver_mask(img, cfg)
     if liver is None:
-        return result(images=[(image, caption, img.copy(), {"n": 0, "flagged": 0}) for _, _, image, _, caption in CELL_TYPES],
-                      summary={f"{t}_count": 0 for t, *_ in CELL_TYPES}, warning="warn_no_liver_outline")
+        return result(images=[(image, caption, img.copy(), {"n": 0, "flagged": 0}) for _, _, image, _, caption in kinds],
+                      summary={f"{t}_count": 0 for t, *_ in kinds}, warning="warn_no_liver_outline")
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     images, cells, summary = [], [], {}
-    for cell_type, prefix, image, range_keys, caption in CELL_TYPES:
+    for cell_type, prefix, image, range_keys, caption in kinds:
         contours = _cells_of_color(img, hsv, liver, cfg, range_keys)
         records = contour_records(contours, prefix)
         flagged = _flag_merged(records, cfg)
