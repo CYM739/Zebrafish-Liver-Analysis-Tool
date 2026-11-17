@@ -2,10 +2,14 @@
 
 A profile module defines NAME and ANALYSES = {"count": Analysis, "boundary": Analysis, "cell": Analysis}.
 Analysis.run(img, cfg) takes a BGR image and that analysis' config, and returns result(...).
+"count" also takes cell_types: the COUNT_STAINS keys to count (default all).
 """
 import statistics
 from dataclasses import dataclass
 from typing import Callable
+
+# Cell types the counting analysis finds, each with the BGR channel of its stain (red / green)
+COUNT_STAINS = {"macrophage": 2, "neutrophil": 1}
 
 # Kinds of tunable setting, besides (min, max, step) sliders and None (free number)
 HSV = "hsv"    # <key>_lower / <key>_upper pair of [H, S, V]

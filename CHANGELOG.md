@@ -2,6 +2,15 @@
 
 All changes relative to the [original repository](https://github.com/dhcl8881/nhri) by dhcl8881.
 
+## [Unreleased] - 2026-11-17 (single-stain counting)
+
+### Changed
+
+- **Counting takes single-stain images.** Users already split the green and red channels in ImageJ, so the counting tab now has two upload boxes, green (neutrophils) and red (macrophages), instead of one box for the merged bright-field + fluorescence image. Each image keeps the white dashed liver outline. Each file is one row in `counting_summary.csv`, with only its cell type's count.
+- An image put in the other color's box is counted as the color it shows, with a short note. It is taken as green or red only when one color clearly dominates (`app.stain_*` in `config.yaml`); merged or unclear images are counted as the box says.
+- The counting algorithms are unchanged; `count` gained `cell_types` to count one cell type. The combined tab still takes merged images and counts both types; its results are unchanged (verified on all sample images).
+- Counts on single-stain images differ from those on merged images, mainly for macrophages. On the merged image the bright-field background lifts faint red signals above the brightness threshold (V ≥ 50); on the red image the same spots stay below it. Sample images, dhcl8881, merged → single-stain: image 1 macrophages 28 → 23, neutrophils 12 → 13; image 3 macrophages 41 → 29, neutrophils 20 → 17. Not yet checked against manual counts, so it is open which is closer, and whether the thresholds need retuning for single-stain images.
+
 ## [Unreleased] - 2026-11-04 (nucleus edge)
 
 ### Fixed
