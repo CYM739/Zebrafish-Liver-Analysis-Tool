@@ -28,5 +28,6 @@ ANALYSES = {
         ("max_nucleus_fraction", "cp_max_nucleus_fraction", (0.5, 1.0, 0.05)),
         ("min_relative_brightness", "cp_min_relative_brightness", (0.0, 1.0, 0.05)),
         ("exclude_border", "cp_exclude_border", BOOL),
+        ("cell_membrane_only", "cp_cell_membrane_only", BOOL),
     )),
 }

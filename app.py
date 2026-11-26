@@ -283,12 +283,14 @@ def build_settings(tr, spec, defaults):
             scalars.append((key, label, kind))
     with gr.Row():
         for key, label, kind in scalars:
-            if kind is None:
-                inputs.append(tr(gr.Number, label, value=defaults[key]))
-            elif kind == BOOL:
-                inputs.append(tr(gr.Checkbox, label, value=defaults[key]))
-            else:
-                inputs.append(tr(gr.Slider, label, minimum=kind[0], maximum=kind[1], step=kind[2], value=defaults[key]))
+            # Own column per control: Gradio packs adjacent inputs into one block that squeezes instead of wrapping
+            with gr.Column(min_width=220):
+                if kind is None:
+                    inputs.append(tr(gr.Number, label, value=defaults[key]))
+                elif kind == BOOL:
+                    inputs.append(tr(gr.Checkbox, label, value=defaults[key]))
+                else:
+                    inputs.append(tr(gr.Slider, label, minimum=kind[0], maximum=kind[1], step=kind[2], value=defaults[key]))
     return inputs
 
 

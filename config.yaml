@@ -65,6 +65,7 @@ profiles:
       um_conversion: 0.181
       nc_denominator: cell             # N/C = nucleus ÷ whole cell; "cytoplasm" = nucleus ÷ (cell − nucleus)
       cell_channel: blue               # stain of the cell bodies / membranes
+      cell_membrane_only: false        # outline cells from cell_channel alone (true) instead of all channels
       nucleus_channel: red             # stain of the nuclei in the channel-mix image
       diameter: 0                      # typical cell diameter in px; 0 = automatic
       flow_threshold: 0.4
