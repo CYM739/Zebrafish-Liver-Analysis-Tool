@@ -68,6 +68,7 @@ STRINGS = {
     "cp_cellprob_threshold": {"en": "Cell detection threshold (lower finds more cells)", "zh": "細胞判定門檻（越低找到越多細胞）"},
     "cp_flow_threshold": {"en": "Cell shape tolerance (higher accepts more shapes)", "zh": "細胞形狀容許度（越高接受越多形狀）"},
     "cp_exclude_border": {"en": "Exclude cells cut off by the image edge", "zh": "排除被影像邊緣切到的細胞"},
+    "cp_cell_membrane_only": {"en": "Outline cells from the membrane stain only", "zh": "只用細胞膜螢光描出細胞輪廓"},
     "cp_min_relative_brightness": {"en": "Exclude cells dimmer than (fraction of the median cell)",
                                    "zh": "亮度低於中位數細胞此比例時排除（失焦）"},
     "cp_max_nucleus_fraction": {"en": "Exclude cells whose nucleus fills more than (fraction of cell)",

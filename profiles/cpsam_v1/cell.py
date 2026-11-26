@@ -33,6 +33,14 @@ def _model(name):
         raise ModelUnavailable("warn_model_download_failed") from e
 
 
+def _channels_only(img, *stains):
+    """Copy of the image keeping only these stains' channels."""
+    out = np.zeros_like(img)
+    for stain in stains:
+        out[..., _CHANNELS[stain]] = img[..., _CHANNELS[stain]]
+    return out
+
+
 def _segment(model, bgr, cfg):
     masks, *_ = model.eval(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB), channel_axis=2, diameter=cfg["diameter"] or None,
                            flow_threshold=cfg["flow_threshold"], cellprob_threshold=cfg["cellprob_threshold"])
@@ -87,11 +95,10 @@ def _outline(img, labels, keep, color):
 
 def cell(img, cfg):
     model = _model(cfg["model"])
-    cells = _segment(model, img, cfg)
-    stain = np.zeros_like(img)
-    channel = _CHANNELS[cfg["nucleus_channel"]]
-    stain[..., channel] = img[..., channel]
-    nuclei = _refine_nuclei(_segment(model, stain, cfg), img[..., channel], cfg["nucleus_edge"])
+    # cell_membrane_only: where bright nuclei outshine faint membranes, Cellpose outlines nucleus + glow as the cell
+    cells = _segment(model, _channels_only(img, cfg["cell_channel"]) if cfg["cell_membrane_only"] else img, cfg)
+    nuclei = _refine_nuclei(_segment(model, _channels_only(img, cfg["nucleus_channel"]), cfg),
+                            img[..., _CHANNELS[cfg["nucleus_channel"]]], cfg["nucleus_edge"])
 
     labels = np.unique(cells)[1:]
     if not len(labels):

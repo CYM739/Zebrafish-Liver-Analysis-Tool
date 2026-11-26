@@ -49,6 +49,8 @@ Profile settings live under `profiles:` in `config.yaml`; the default profile is
 
 N/C ratio definition (`cpsam-v1`, `cell.nc_denominator`, not shown in the app): `cell` (default) = nucleus ÷ whole cell, `cytoplasm` = nucleus ÷ (cell − nucleus). Both are used in the literature; `cell` counts cytoplasm lying above or below the nucleus. The value used is recorded in `*_settings.json`.
 
+Cell outline (`cpsam-v1`, `cell.cell_membrane_only`, also in Advanced Settings; default off): Cellpose outlines cells from all channels. Where bright nuclei outshine faint membranes it outlines each nucleus plus its glow as the cell; turning this on outlines cells from the membrane stain alone.
+
 Nucleus outline (`cpsam-v1`, `cell.nucleus_edge`, not shown in the app): Cellpose's nucleus masks include the blurred glow around each nucleus, so each one is shrunk to its brightness edge, halfway (`0.5`) between the local background and the nucleus' peak brightness (half maximum).
 
 To add a profile, add a module under `profiles/` that defines `NAME` and `ANALYSES` (see `profiles/base.py`), register it in `profiles/__init__.py`, and add its section to `config.yaml` and its labels to `i18n.py`.

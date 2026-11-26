@@ -2,6 +2,16 @@
 
 All changes relative to the [original repository](https://github.com/dhcl8881/nhri) by dhcl8881.
 
+## [Unreleased] - 2026-11-26 (membrane-only cell outline)
+
+### Added
+
+- `cpsam-v1` N/C: option to outline cells from the membrane stain only (`cell.cell_membrane_only`, also a checkbox in Advanced Settings; default off, so results are unchanged). On the new single-plane samples (Ctrl-1–5, bright nuclei, faint membranes), outlining from all channels drew each nucleus plus its glow as the cell: median cell area 43–57 µm², N/C medians 0.49–0.58. From the membrane alone: 135–189 µm² and 0.15–0.20. On sample images 4–6 the N/C medians become 0.198 / 0.217 / 0.189 (dhcl8881: 0.209 / 0.208 / 0.183), with fewer measurable cells (83 / 130 / 123 instead of 125 / 143 / 138), because more cells hold other than exactly one nucleus.
+
+### Fixed
+
+- Advanced Settings: each control has its own column, so they wrap onto new lines instead of squeezing into one row (labels were wrapping one character per line, worst on phones).
+
 ## [Unreleased] - 2026-11-17 (single-stain counting)
 
 ### Changed
